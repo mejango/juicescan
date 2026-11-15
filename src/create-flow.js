@@ -28,6 +28,7 @@ import {
 } from './launch-component.js';
 import { pinFile, pinJson, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { getAuditPrompt } from './prompts.js';
+import { CREATE_BATCH_ABI, MAX_SAFE_SIGNERS, MIN_SAFE_SIGNERS, bundleSafeLaunch, resolveSafePlan, safePolicyIssue, safeSignerAddress, verifySafe, verifySafeSimulation } from './safe-create.js';
 import { clearLaunchCalls, launchCallsFor, loadLaunchCalls, provesLaunch, saveLaunchCalls, unfinishedLaunchOutcome } from './launch-retry.js';
 import { relayrForwarderState, relayrSignedProofOf, decodeForwardedRequest, buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession, restoreUnsentRelayrPayment, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession } from './relayr.js';
 import { renderRelayrReceiptInto } from './relayr-ui.js';
@@ -371,6 +372,7 @@ function initState() {
       linksOpen: false, ownerOpen: false, tagsOpen: false, customOpen: false,
     },
     revOperator: PERMANENTLY_DISABLED_AUTHORITY, // no operator by default; checked controls can assign one
+    authoritySafe: authoritySafeIn(null), // a new Safe as the owner (or a revnet's operator), created in the launch
     revBaseCurrency: 1,              // revnet issuance-pricing currency: 1=ETH (native, 61166) | 2=USD
     accepts: ['eth'],                // accounting token(s) the project HOLDS / issues against: 'eth', 'usdc', or ['custom']
     customToken: { address: '', name: '', symbol: '', decimals: null, status: 'idle', error: '' }, // 'custom' accounting token (one ERC-20, same address on all chains; its own currency id, no price feed)
@@ -476,6 +478,27 @@ function normalizeImportedItem(value) {
 
 // Merge a loaded/imported draft over current defaults. Only known fields cross the boundary; arrays and chain
 // selections are bounded/normalized before they can reach a transaction builder.
+// The new-Safe choice as the form keeps it: at least two signer rows, three to start.
+export function authoritySafeIn(saved) {
+  var signers = saved && Array.isArray(saved.signers)
+    ? saved.signers.slice(0, MAX_SAFE_SIGNERS).map(function (signer) { return String(signer == null ? '' : signer).trim().slice(0, 64); })
+    : ['', '', ''];
+  while (signers.length < MIN_SAFE_SIGNERS) signers.push('');
+  var threshold = saved && Number.isInteger(saved.threshold) ? saved.threshold : 2;
+  return { on: !!(saved && saved.on), signers: signers, threshold: threshold };
+}
+
+// Does this launch create a Safe as the project's owner, or as a revnet's operator?
+export function createsSafe(state) {
+  var authority = state.projectType === 'revnet' ? state.revOperator : state.details.owner;
+  return !!(state.authoritySafe && state.authoritySafe.on) && String(authority || '').toLowerCase() !== PERMANENTLY_DISABLED_AUTHORITY;
+}
+
+// How every summary names the Safe before its address is known.
+export function newSafeSummary(state) {
+  return 'A new multisig, ' + state.authoritySafe.threshold + ' of ' + state.authoritySafe.signers.length + ' approvals';
+}
+
 function mergeDraft(obj) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
   var defaults = initState();
@@ -487,6 +510,7 @@ function mergeDraft(obj) {
   s.details.tags = Array.isArray(s.details.tags) ? s.details.tags.slice(0, 50).map(String) : [];
   s.collection = mergeKnownDraftFields(defaults.collection, obj.collection);
   s.customToken = mergeKnownDraftFields(defaults.customToken, obj.customToken);
+  s.authoritySafe = authoritySafeIn(obj.authoritySafe);
   if (s.customToken.status === 'loading') s.customToken.status = 'idle'; // never import a stuck in-flight lookup (re-verified on import)
   var allowedChains = CHAIN_PAIRS.map(function (pair) { return s.network === 'testnet' ? pair.testnet : pair.canon; });
   var seenChains = {};
@@ -549,7 +573,7 @@ function mergeDraft(obj) {
 // What the shared file's mapper needs from this form: its blank shapes, its chain pairs and its currency rule.
 function jbDraftDeps() {
   return {
-    state: initState, stage: createStage, item: itemDraft, pairs: CHAIN_PAIRS, canon: canonChainId,
+    state: initState, stage: createStage, item: itemDraft, pairs: CHAIN_PAIRS, canon: canonChainId, createsSafe: createsSafe, authoritySafeIn: authoritySafeIn,
     durationPresets: DURATION_PRESETS, collectionName: collectionNameOf, collectionSymbol: collectionSymbolOf,
     customCurrency: function (address) { return isAddr(address) ? Number(BigInt(address) % (1n << 32n)) : 0; },
   };
@@ -1043,7 +1067,10 @@ function ownerSection(state, render) {
       render();
     },
   ));
-  if (changesAllowed) {
+  if (changesAllowed) box.appendChild(authoritySafeChoice(state, render, 'owner'));
+  if (changesAllowed && createsSafe(state)) {
+    box.appendChild(authoritySafeEditor(state, render, 'owner'));
+  } else if (changesAllowed) {
     if (!perChainOpen(state, 'owner')) {
       var ownerInput = textInput(d.owner, '0x… or name.eth', function (v) { d.owner = v.trim(); });
       var ownerHint = attachEns(ownerInput, function (name, addr) { d.ownerResolvedFor = addr ? name : null; d.ownerResolved = addr || null; }, { chainId: (state.chainIds || [])[0] });
@@ -1079,7 +1106,10 @@ function operatorSection(state, render) {
       render();
     },
   ));
-  if (controlsEnabled) {
+  if (controlsEnabled) box.appendChild(authoritySafeChoice(state, render, 'operator'));
+  if (controlsEnabled && createsSafe(state)) {
+    box.appendChild(authoritySafeEditor(state, render, 'operator'));
+  } else if (controlsEnabled) {
     if (!perChainOpen(state, 'op')) {
       var opInput = textInput(state.revOperator, '0x… or name.eth', function (v) { state.revOperator = v.trim(); });
       var opHint = attachEns(opInput, function (name, addr) { state.revOperatorResolvedFor = addr ? name : null; state.revOperatorResolved = addr || null; }, { chainId: (state.chainIds || [])[0] });
@@ -1092,6 +1122,65 @@ function operatorSection(state, render) {
     box.appendChild(infoNote('No operator address will retain these limited controls.'));
   }
   wrap.appendChild(fieldBlock('Revnet operator', false, box));
+  return wrap;
+}
+
+// The line that switches between naming an owner and creating a multisig for it.
+function authoritySafeChoice(state, render, role) {
+  var on = createsSafe(state);
+  var line = el('div', 'create-hint');
+  line.appendChild(document.createTextNode(on ? 'Create a multisig so its signers approve decisions together. ' : 'Use your wallet or an existing multisig. '));
+  var link = el('button', 'create-pcaddr-toggle');
+  link.type = 'button';
+  link.textContent = on ? 'Already have an ' + role + ' in mind?' : 'Create a multisig';
+  link.addEventListener('click', function (e) { e.preventDefault(); state.authoritySafe.on = !on; render(); });
+  line.appendChild(link);
+  return line;
+}
+
+// Signers and approval count of the Safe this launch creates.
+function authoritySafeEditor(state, render, role) {
+  var safe = state.authoritySafe, label = role === 'owner' ? 'Owner' : 'Operator';
+  var wrap = el('div', '');
+  var addresses = safe.signers.map(safeSignerAddress);
+  safe.signers.forEach(function (signer, index) {
+    var row = el('div', 'create-split-row');
+    var input = textInput(signer, '0x…', function (value) { safe.signers[index] = value.trim().slice(0, 64); });
+    input.setAttribute('aria-label', label + ' signer ' + (index + 1));
+    // The row's error and the approval choices follow what was typed once the field is left.
+    input.addEventListener('change', render);
+    row.appendChild(input);
+    var rm = el('button', 'create-split-rm'); rm.type = 'button'; rm.textContent = '✕';
+    rm.title = 'Remove'; rm.setAttribute('aria-label', 'Remove ' + label.toLowerCase() + ' signer ' + (index + 1));
+    rm.disabled = safe.signers.length <= MIN_SAFE_SIGNERS;
+    rm.addEventListener('click', function (e) {
+      e.preventDefault();
+      safe.signers.splice(index, 1);
+      if (safe.threshold > safe.signers.length) safe.threshold = safe.signers.length;
+      render();
+    });
+    row.appendChild(rm);
+    wrap.appendChild(row);
+    var issue = !signer.trim() ? '' : !addresses[index] ? 'Enter a valid wallet address. Zero and reserved addresses cannot sign.'
+      : addresses.indexOf(addresses[index]) !== index || addresses.lastIndexOf(addresses[index]) !== index ? 'Each signer must have a different address.' : '';
+    if (issue) { var err = el('div', 'create-hint warn'); err.setAttribute('role', 'alert'); err.textContent = issue; wrap.appendChild(err); }
+  });
+  var add = el('button', 'operator-cta create-add-link'); add.type = 'button'; add.textContent = '+ Add signer';
+  add.disabled = safe.signers.length >= MAX_SAFE_SIGNERS;
+  add.addEventListener('click', function (e) { e.preventDefault(); safe.signers.push(''); render(); });
+  wrap.appendChild(add);
+  var policy = el('select', 'field create-input create-input-auto');
+  policy.setAttribute('aria-label', label + ' approval policy');
+  var valid = Number.isInteger(safe.threshold) && safe.threshold >= 1 && safe.threshold <= safe.signers.length;
+  if (!valid) { var none = el('option', ''); none.value = ''; none.textContent = 'Choose policy'; none.disabled = true; none.selected = true; policy.appendChild(none); }
+  safe.signers.forEach(function (_, index) {
+    var option = el('option', ''); option.value = String(index + 1); option.textContent = (index + 1) + ' of ' + safe.signers.length;
+    option.selected = valid && safe.threshold === index + 1;
+    policy.appendChild(option);
+  });
+  policy.addEventListener('change', function () { safe.threshold = Number(policy.value); render(); });
+  wrap.appendChild(fieldBlock('Approval policy', false, policy));
+  wrap.appendChild(infoNote('The multisig is created in the launch, at the same address on every chain.'));
   return wrap;
 }
 
@@ -3435,8 +3524,9 @@ function renderDeploy(state, render) {
   var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
   var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
   // An empty field means the connected wallet; only a typed value that is not an address blocks.
-  var needOwner = !isRev && ownerFieldInvalid(state.details.owner, ownerRaw);
-  var needOperator = isRev && ownerFieldInvalid(state.revOperator, opRaw);
+  var safeIssue = createsSafe(state) ? safePolicyIssue(state.authoritySafe.signers, state.authoritySafe.threshold) : '';
+  var needOwner = !isRev && (createsSafe(state) ? !!safeIssue : ownerFieldInvalid(state.details.owner, ownerRaw));
+  var needOperator = isRev && (createsSafe(state) ? !!safeIssue : ownerFieldInvalid(state.revOperator, opRaw));
   var needCustomToken = customAccounting(state) && !customReady(state); // custom accounting token not resolved yet
   var recipBad = recipientIssue(state); // a split/payout/auto-issuance with a value but no valid recipient
   var totalBad = splitTotalIssue(state); // a stage whose reserved/payout percentages sum over 100%
@@ -3838,7 +3928,8 @@ function reviewSummary(state) {
     var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
     c.appendChild(row(
       'Revnet operator',
-      String(opRaw || '').toLowerCase() === PERMANENTLY_DISABLED_AUTHORITY
+      createsSafe(state) ? newSafeSummary(state)
+        : String(opRaw || '').toLowerCase() === PERMANENTLY_DISABLED_AUTHORITY
         ? 'No retained authority'
         : (/^0x/.test(opRaw) ? shortAddr(opRaw) : (opRaw || 'Your connected wallet')),
     ));
@@ -4176,11 +4267,11 @@ async function executeCreateDirectSession(state, session, resumed, lock, keepSav
     if (resumed) {
       var reviewed = await (review ? review.confirm : confirmTransactionModal)({
         action: 'Resume saved project launch',
-        transactions: remaining.map(function (plan) { return {
+        transactions: remaining.map(function (plan) { return Object.assign({
           chainId: plan.chainId, chain: chainName(plan.chainId), address: plan.address,
           'function': plan.functionName || 'launchProjectFor', args: plan.args, value: plan.value.toString(),
           calldata: encodeFunctionData({ abi: plan.abi, functionName: plan.functionName || 'launchProjectFor', args: plan.args }),
-        }; }),
+        }, safeReviewFields(plan)); }),
       }, { title: 'Review remaining launch transactions', confirmText: 'Confirm & continue',
         note: 'These are the saved launch calls with the original shared start time. Confirmed chains are skipped. Each remaining chain requires its own transaction and gas.' });
       if (!reviewed || (typeof reviewed === 'object' && !reviewed.ok)) return false;
@@ -4188,7 +4279,8 @@ async function executeCreateDirectSession(state, session, resumed, lock, keepSav
     // Catch any configuration/fee failures across all remaining chains before submitting the next leg.
     for (var j = 0; j < remaining.length; j++) {
       var pending = remaining[j];
-      assertNewTierPolicy(pending.args);
+      // A launch that creates its Safe carries its tiers inside the batch: the launch call itself is checked.
+      assertNewTierPolicy(pending.launch ? pending.launch.args : pending.args);
       push('Simulating the saved launch on ' + chainName(pending.chainId) + '…');
       await simulateTransaction({ chainId: pending.chainId, address: pending.address, abi: pending.abi,
         functionName: pending.functionName || 'launchProjectFor', args: pending.args, value: pending.value, account: session.account });
@@ -4197,6 +4289,7 @@ async function executeCreateDirectSession(state, session, resumed, lock, keepSav
       var plan = remaining[k];
       if (!getAccount() || getAccount().toLowerCase() !== session.account.toLowerCase()) throw new Error('Connected account changed. Reconnect the launching wallet to continue.');
       assertScheduleFresh(plan.scheduleValidUntil);
+      await checkSafeCreation(plan, session.account);
       push('Confirm the launch on ' + chainName(plan.chainId) + ' in your wallet…');
       // Saves this leg's outcome; under a lost lock, hands it to the fresh-lock reconcile for this same attempt.
       var keep = function (hash) {
@@ -4246,6 +4339,12 @@ async function executeCreateDirectSession(state, session, resumed, lock, keepSav
       }
     }
   }
+  // Every launched leg's Safe is confirmed here, so a launch resumed after its transaction mined is checked too.
+  await Promise.all(session.plans.filter(function (plan) { return plan.safe && plan.hash; }).map(function (plan) {
+    return verifySafe(createPublicClientForChain(plan.chainId), plan.safe).catch(function () {
+      push('The multisig ' + plan.safe.address + ' could not be confirmed on ' + chainName(plan.chainId) + ' after the launch. Check it before sending it anything.', 'err');
+    });
+  }));
   await captureDeployedLegs(state, session.plans.map(function (plan) { return { chainId: plan.chainId, hash: plan.hash, rulesetCount: plan.rulesetCount }; }));
   state._deployedChains = session.plans.map(function (plan) { return plan.chainId; });
   await lock.assertHeld();
@@ -4404,10 +4503,14 @@ function deploy(state, render) {
   // The project owner / revnet operator is an explicit, required launch argument (ENS-resolved).
   var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
   var operatorRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
-  if (state.projectType === 'revnet' ? ownerFieldInvalid(state.revOperator, operatorRaw) : ownerFieldInvalid(state.details.owner, ownerRaw)) {
+  if (createsSafe(state)) {
+    var safeIssue = safePolicyIssue(state.authoritySafe.signers, state.authoritySafe.threshold);
+    if (safeIssue) { state.statusLines.push({ text: 'Complete the ' + (state.projectType === 'revnet' ? 'operator' : 'owner') + ' multisig. ' + safeIssue, err: true }); render(); return; }
+  } else if (state.projectType === 'revnet' ? ownerFieldInvalid(state.revOperator, operatorRaw) : ownerFieldInvalid(state.details.owner, ownerRaw)) {
     state.statusLines.push({ text: state.projectType === 'revnet' ? 'Set a valid revnet operator before deploying.' : 'Set a valid project owner before launching.', err: true }); render(); return;
   }
-  var owner = isAddr(ownerRaw) ? ownerRaw : signer;
+  // A new Safe's address is known only once the launch's salt is: until then the signer stands in.
+  var owner = !createsSafe(state) && isAddr(ownerRaw) ? ownerRaw : signer;
   beginDeployRun(state, render, owner);
 }
 
@@ -4484,7 +4587,7 @@ async function runDeploy(state, owner) {
   var chainNames = state.chainIds.map(function (cid) { return chainName(cid); }).join(', ');
   var knownRows = [
     ['Name', state.details.name || 'project'],
-    [isRev ? 'Operator' : 'Owner', isRev ? (operatorRaw || owner) : owner],
+    [isRev ? 'Operator' : 'Owner', createsSafe(state) ? newSafeSummary(state) : isRev ? (operatorRaw || owner) : owner],
     ['Chains', chainNames],
     isRev ? ['Token', state.details.ticker || 'TOKEN'] : null,
     ['Accepts', (state.accepts || []).map(function (t) { return t === 'eth' ? 'ETH' : t === 'usdc' ? 'USDC' : 'custom token'; }).join(', ') || 'ETH'],
@@ -4560,6 +4663,15 @@ async function runDeploy(state, owner) {
     // BEFORE the user signs or pays anything.
     await resolveItemSplitProjects(state);
     var feeByChain = await fees;
+    var safePlan = null;
+    if (createsSafe(state)) {
+      push('Working out the multisig’s address…');
+      safePlan = await resolveSafePlan({ owners: state.authoritySafe.signers, threshold: state.authoritySafe.threshold, salt: salt, role: isRev ? 'operator' : 'owner' },
+        state.chainIds.map(function (chainId) { return createPublicClientForChain(chainId); }));
+      owner = safePlan.address;
+      knownRows[1] = [isRev ? 'Operator' : 'Owner', safePlan.address + ' (a new multisig, ' + safePlan.threshold + ' of ' + safePlan.owners.length + ' approvals)'];
+      knownRows.splice(2, 0, ['Multisig signers', safePlan.owners.join(', ')]);
+    }
     plans = [];
     for (var i = 0; i < state.chainIds.length; i++) {
       var cid = state.chainIds[i];
@@ -4570,7 +4682,7 @@ async function runDeploy(state, owner) {
       if (plan.missingSuckers) push('Note: some chain pairs have no sucker deployer on ' + chainName(cid) + '; those links will be skipped.', 'err');
       plan.chainId = cid;
       plan.value = feeByChain[i];
-      plans.push(plan);
+      plans.push(safePlan ? withSafeCreation(plan, safePlan) : plan);
     }
   } catch (e) {
     review.fail(friendlyDeployError(e));
@@ -4586,7 +4698,7 @@ async function runDeploy(state, owner) {
     action: (state.projectType === 'revnet' ? 'Deploy revnet' : 'Launch project') + ' on ' + plans.map(function (p) { return chainName(p.chainId); }).join(', '),
     transactions: plans.map(function (p) {
       var fn = p.functionName || 'launchProjectFor';
-      return {
+      return Object.assign({
         chain: chainName(p.chainId),
         chainId: p.chainId,
         address: p.address,
@@ -4594,7 +4706,7 @@ async function runDeploy(state, owner) {
         value: p.value.toString() + ' wei (' + formatEther(p.value) + ' ETH creation fee)',
         args: p.args,
         calldata: encodeFunctionData({ abi: p.abi, functionName: fn, args: p.args }),
-      };
+      }, safeReviewFields(p));
     }),
   };
   reviewPayload.summary = {
@@ -4633,6 +4745,7 @@ async function runDeploy(state, owner) {
       try {
         await simulateTransaction({ chainId: p0.chainId, address: p0.address, abi: p0.abi, functionName: p0.functionName || 'launchProjectFor', args: p0.args, value: p0.value, account: signer });
         push('Simulation passed on ' + chainName(p0.chainId), 'ok');
+        await checkSafeCreation(p0, signer);
       } catch (e) {
         throw new Error('Could not simulate on ' + chainName(p0.chainId) + ': ' + friendlyDeployError(e));
       }
@@ -4658,6 +4771,7 @@ async function runDeploy(state, owner) {
   // Multichain → Relayr (two-step, like revnet-app). We DON'T eth_call-simulate locally — Relayr simulates
   // each chain server-side and only returns a quote if every leg would succeed. Sign one request per chain,
   // post the bundle for a quote, let the user CHOOSE which chain to pay gas on, then pay once.
+  for (var safeIndex = 0; safeIndex < plans.length; safeIndex++) await checkSafeCreation(plans[safeIndex], signer);
   push('Sign one request per chain, gas is paid once at the end.');
   var txs = [];
   var gases = await Promise.all(plans.map(function (plan) { return estimateLaunchGas(plan, signer); }));
@@ -4858,6 +4972,39 @@ async function fundCreateRelayrQuote(state, signer, quote, chains) {
 // Gas for the inner launch call (the forwarder forwards this much). Estimate the direct call + buffer;
 // fall back generously if estimation throws. Includes the creation fee as value so the estimate runs
 // (a 0-value estimate would hit the InvalidCreationFee revert).
+// The launch as one batch that first creates its Safe. Everything downstream sends, saves and verifies the batch
+// like any other launch call; `launch` keeps the call inside it for the review.
+export function withSafeCreation(plan, safe) {
+  var functionName = plan.functionName || 'launchProjectFor';
+  var batch = bundleSafeLaunch({ to: plan.address, value: plan.value, data: encodeFunctionData({ abi: plan.abi, functionName: functionName, args: plan.args }) }, safe);
+  return Object.assign({}, plan, { address: batch.to, abi: CREATE_BATCH_ABI, functionName: 'aggregate3Value', args: batch.args, safe: safe,
+    launch: { address: plan.address, 'function': functionName, args: plan.args } });
+}
+
+// What a review adds for a launch that creates its Safe: the Safe, its signers, and the launch call inside the
+// batch, decoded. The saved plan carries all three, so a resumed launch states them too.
+export function safeReviewFields(plan) {
+  if (!plan.safe) return {};
+  return { creates: 'Safe ' + plan.safe.address + ', ' + plan.safe.threshold + ' of ' + plan.safe.owners.length + ' approvals',
+    signers: plan.safe.owners.slice(), launch: plan.launch };
+}
+
+// Before anything is signed or sent: run the batch and require that the launch ran and the Safe was created at
+// its reviewed address, or is already there as reviewed. The fee is lent to the call, since a relayed launch's
+// signer need not hold it on this chain.
+async function checkSafeCreation(plan, account) {
+  if (!plan.safe) return;
+  var pub = createPublicClientForChain(plan.chainId), out;
+  try {
+    out = await pub.call({ account: account, to: plan.address, value: plan.value,
+      data: encodeFunctionData({ abi: plan.abi, functionName: plan.functionName, args: plan.args }),
+      stateOverride: [{ address: account, balance: BigInt(plan.value) + 10n ** 18n }] });
+  } catch (e) {
+    throw new Error('Could not simulate the multisig creation and launch on ' + chainName(plan.chainId) + ': ' + friendlyDeployError(e));
+  }
+  await verifySafeSimulation(pub, plan.safe, out && out.data);
+}
+
 function launchScheduleLimit(plans) {
   var limits = plans.map(function (plan) { return plan.scheduleValidUntil; }).filter(function (limit) { return limit != null; });
   return limits.length ? Math.min.apply(Math, limits) : null;
@@ -4962,7 +5109,7 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var multi = state.chainIds.length > 1;
   // Per-chain owner override (the "same on all chains" control may set a different address per chain). The
   // CREATE2 `salt` stays derived from the default owner (passed in) so omnichain addresses still match.
-  var chainOwner = chainAddr(state, chainId, 'owner', owner);
+  var chainOwner = createsSafe(state) ? null : chainAddr(state, chainId, 'owner', owner);
   if (isAddr(chainOwner)) owner = chainOwner;
   // Multichain "start immediately" → pin every chain's first ruleset to the one shared deploy-time start
   // (~10 min ahead). Staged single-chain launches use the same pin so every follower has a stable parent.
@@ -5015,7 +5162,8 @@ function buildRevnetArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
   // Per-chain operator override ("same on all chains" control); salt stays on the default for matching addresses.
   var opChain = chainAddr(state, chainId, 'op', opRaw);
-  var operator = isAddr(opChain) ? opChain : (isAddr(opRaw) ? opRaw : owner);
+  // A new Safe (passed as owner) is the operator on every chain.
+  var operator = createsSafe(state) ? owner : isAddr(opChain) ? opChain : (isAddr(opRaw) ? opRaw : owner);
 
   var stages = [];
   var prevStart = deployStart;

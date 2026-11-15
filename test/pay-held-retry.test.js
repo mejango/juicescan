@@ -27,6 +27,7 @@ vi.mock('../src/fee-buyback-review.js', () => ({
 }));
 vi.mock('../src/pay-preview.js', async (original) => ({
   payRouteIsBetter: (await original()).payRouteIsBetter,
+  bestPayRoute: (await original()).bestPayRoute,
   computePayPreview: () => new Promise(() => {}),
   prepareCardPay: (...args) => h.prepare(...args),
   formatTokenCount: (value) => String(value),

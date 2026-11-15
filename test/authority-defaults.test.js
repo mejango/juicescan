@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { encodeFunctionData } from 'viem';
-import { __test } from '../src/create-flow.js';
+import { __test, createsSafe, safeReviewFields, withSafeCreation } from '../src/create-flow.js';
+import { MULTICALL3, unbundleSafeLaunch } from '../src/safe-create.js';
 
 const { initState, buildLaunchArgs, buildRevnetArgs } = __test;
 const DEAD = '0xdead000000000000000000000000000000000000';
@@ -43,5 +44,56 @@ describe('create authority defaults', () => {
     expect(tx.args[4].baseline721HookConfiguration.tiersConfig.tiers).toEqual([]);
     expect(tx.args[4].preventOperatorMinting).toBe(true);
     expect(() => encodeFunctionData(tx)).not.toThrow();
+  });
+});
+
+describe('a launch that creates its Safe', () => {
+  // The SDK's own address vector, also pinned in safe-create.test.js.
+  const SAFE = { owners: ['0x0000000000000000000000000000000000000002', '0x0000000000000000000000000000000000000003', '0x0000000000000000000000000000000000000004'],
+    threshold: 2, saltNonce: '0x' + '00'.repeat(31) + '2a', proxyCreationCode: '0x6001600055', address: '0xF0CBF9d51dEe3F870E12f3b4dC36cB5f9a3e4132' };
+
+  it('is on only while the owner or operator is kept', () => {
+    const state = initState();
+    state.projectType = 'custom';
+    state.authoritySafe.on = true;
+    expect(createsSafe(state)).toBe(false); // ownership goes to 0xdead by default
+    state.details.owner = '';
+    expect(createsSafe(state)).toBe(true);
+    state.projectType = 'revnet';
+    expect(createsSafe(state)).toBe(false);
+    state.revOperator = '';
+    expect(createsSafe(state)).toBe(true);
+  });
+
+  it('is named in the Deploy summary in place of the wallet or a typed operator', () => {
+    const state = initState();
+    state.projectType = 'revnet'; state.chainIds = [1]; state.details.name = 'Safe revnet'; state.details.ticker = 'REV';
+    state.revOperator = '0x1111111111111111111111111111111111111111';
+    expect(__test.renderDeploy(state, () => {}).textContent).not.toContain('A new multisig');
+    state.authoritySafe = { on: true, signers: SAFE.owners.slice(), threshold: 2 };
+    const text = __test.renderDeploy(state, () => {}).textContent;
+    expect(text).toContain('A new multisig, 2 of 3 approvals');
+    expect(text).not.toContain('0x1111');
+  });
+
+  it('sends one batch per chain: the Safe, then exactly the launch call, with its fee', () => {
+    const state = initState();
+    state.projectType = 'custom'; state.chainIds = [1]; state.details.name = 'Safe project'; state.details.owner = '';
+    state.authoritySafe.on = true;
+    const plan = Object.assign(buildLaunchArgs(state, 1, SAFE.address, 'ipfs://project', SALT, 0), { chainId: 1, value: 5n });
+    const launch = encodeFunctionData({ abi: plan.abi, functionName: plan.functionName || 'launchProjectFor', args: plan.args });
+    const batch = withSafeCreation(plan, SAFE);
+    expect(batch.address).toBe(MULTICALL3);
+    expect(batch.functionName).toBe('aggregate3Value');
+    expect(batch.value).toBe(5n);
+    expect(batch.launch.address).toBe(plan.address);
+    const data = encodeFunctionData({ abi: batch.abi, functionName: batch.functionName, args: batch.args });
+    const inner = unbundleSafeLaunch({ to: batch.address, data, value: batch.value }, SAFE);
+    expect([inner.to.toLowerCase(), inner.data, inner.value]).toEqual([plan.address.toLowerCase(), launch, 5n]);
+    expect(plan.args[0]).toBe(SAFE.address);
+    // A review, fresh or resumed from the saved plan, names the Safe, its signers and the launch inside the batch.
+    const saved = JSON.parse(JSON.stringify(batch, (_, value) => (typeof value === 'bigint' ? value.toString() : value)));
+    expect(safeReviewFields(saved)).toMatchObject({ creates: 'Safe ' + SAFE.address + ', 2 of 3 approvals', signers: SAFE.owners, launch: { address: plan.address, 'function': 'launchProjectFor' } });
+    expect(safeReviewFields(plan)).toEqual({});
   });
 });

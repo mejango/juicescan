@@ -5,7 +5,7 @@
 // v6/uniswapV3.ts/uniswapV4.ts quotes; test/fixtures/sdk-557a9fc/pay-prepare.json pins identical metadata,
 // previews, minimums, errors and reads.
 
-import { decodeFunctionResult, encodeAbiParameters, encodeFunctionData, getAddress as checksumAddress, keccak256, zeroAddress } from 'viem';
+import { BaseError, ContractFunctionRevertedError, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, getAddress as checksumAddress, keccak256, zeroAddress } from 'viem';
 import { generationAddresses, getABI } from './abi-registry.js';
 import { createHookMetadata, hookMetadataId } from './hook-metadata.js';
 import { v6Address } from './nft-inventory-read.js';
@@ -28,6 +28,38 @@ export function buildPayTx({ chainId, terminal, projectId, token, amount, benefi
     args: [projectId, token, amount, beneficiary, minReturnedTokens, memo, metadata],
     value: isNativeToken(token) ? amount : 0n,
   };
+}
+
+/**
+ * Did the node run the call and have it revert? viem also words a node's own failure (JSON-RPC -32603
+ * "Internal error", no revert data) as a contract revert and drops the node's error code, and words some reverts
+ * (-32000 "execution reverted") without that class. So a route is dropped only on evidence: revert data, or a
+ * node message that says the execution reverted. Mirror of nana-sdk-core v6/payRoute.ts#isExecutionRevert.
+ */
+export function isExecutionRevert(error) {
+  if (!(error instanceof BaseError)) return false;
+  return !!error.walk(function (cause) {
+    if (cause instanceof ContractFunctionRevertedError) {
+      return cause.raw !== undefined || cause.signature !== undefined || /revert/i.test(cause.reason || '');
+    }
+    return cause.name === 'ExecutionRevertedError' || /execution reverted/i.test(cause.details || '');
+  });
+}
+
+/**
+ * What a native-token payment delivers when run as `payer`: the token count, 'reverted', or null when it could
+ * not be run (an RPC without call overrides). The amount is lent to the call, so the payer need not hold it yet.
+ * A market-priced preview is an estimate; this is what the payment would do in this block.
+ */
+export async function runUserPay(client, payment, payer) {
+  try {
+    var simulated = await client.simulateContract(Object.assign({}, buildPayTx(payment), {
+      account: payer, stateOverride: [{ address: payer, balance: payment.amount * 2n + 10n ** 18n }],
+    }));
+    return typeof simulated.result === 'bigint' ? simulated.result : null;
+  } catch (error) {
+    return isExecutionRevert(error) ? 'reverted' : null;
+  }
 }
 
 /** The project's primary terminal for the token, else the router terminal registry. */
