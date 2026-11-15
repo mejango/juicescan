@@ -2616,11 +2616,11 @@ function appendRecipientPicker(toFieldNode, rec, render, opts) {
     };
     // Payout splits have no Fund market: there the hook is Sticky or a custom one.
     if (!opts.allowFundMarket && rec.type === 'lphook') rec.type = 'customhook';
-    // Sticky pays a Sticky token's holders. It is one token and one group on every chain, so a slot holding
-    // per-chain values stays a custom hook.
+    // Sticky pays a Sticky token's holders: one token and one group on every chain. A slot holding per-chain
+    // addresses stays a custom hook; per-chain project ids never apply to a row on the distributor (splitState).
     var chainIds = (opts.state && opts.state.chainIds) || [];
     var stickyOffered = chainIds.length > 0 && chainIds.every(function (cid) { return !!stickyDistributorAddress(cid); });
-    var slotPerChain = !!opts.state && ((!!opts.perChainKey && perChainOpen(opts.state, opts.perChainKey)) || (!!opts.pidKey && perChainOpen(opts.state, opts.pidKey)));
+    var slotPerChain = !!opts.state && !!opts.perChainKey && perChainOpen(opts.state, opts.perChainKey);
     var sticky = stickyOffered && isStickyRecipient(rec) && !slotPerChain;
     var hookKind = rec.type === 'lphook' ? 'fundmarket' : sticky ? 'sticky' : 'custom';
     var hookKinds = [opts.allowFundMarket ? ['fundmarket', 'Fund market'] : null, stickyOffered ? ['sticky', 'Sticky'] : null, ['custom', 'Custom']].filter(Boolean);
@@ -3934,7 +3934,7 @@ function perChainPayoutRowControl(state, render, rec, keys, defaults) {
     wrap.appendChild(link);
     return wrap;
   }
-  var wantsPid = rec.type === 'project' || rec.type === 'customhook';
+  var wantsPid = rec.type === 'project' || (rec.type === 'customhook' && !isStickyRecipient(rec));
   var wantsAddr = rec.type === 'wallet' || !(rec.preferAddToBalance && rec.type === 'project');
   state.chainIds.forEach(function (cid) {
     var rowc = el('div', 'create-pcaddr-row');
@@ -5701,6 +5701,9 @@ function splitState(rec, rawPercent, beneficiaryOverride, chainId, projectIdOver
   // The address-bearing field is the wallet recipient OR the project / custom-hook token beneficiary.
   var addr = (beneficiaryOverride != null) ? beneficiaryOverride : pickResolved(rec.address, rec); // resolve ENS → 0x
   // Project and custom-hook splits can target a project id (per-chain override → default).
+  // A Sticky row's project id is its holders' group, one value on every chain: a per-chain id left in its slot
+  // (the form shows none for it) never replaces the group the row displays.
+  if (isStickyRecipient(rec)) projectIdOverride = null;
   var pid = (rec.type === 'project' || rec.type === 'customhook')
     ? (projectIdOverride != null ? projectIdOverride : (Number(rec.projectId) || 0)) : 0;
   // Custom split hook → user-supplied hook contract (carries the projectId + beneficiary above to the hook).

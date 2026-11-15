@@ -266,6 +266,13 @@ describe('the shared .jb file on Juicescan', () => {
     ]);
     expect(launchOf(back)).toBe(launchOf(state));
     expect(launchOf(state)).toContain(DISTRIBUTOR);
+    // A per-chain project id left in a Sticky slot is neither launched nor written, and a file holding one is refused.
+    pcAddrSet(state, 8453, 'rpid:0:1', 8000);
+    expect(launchOf(state)).not.toContain('8000');
+    expect(createDraftObject(state).stages[0].reserved[1]).toMatchObject({ to: 'sticky', projectIdPerChain: {} });
+    const withIds = createDraftObject(state);
+    Object.assign(withIds.stages[0].reserved[3], { projectIdPerChain: { 8453: '8000' } });
+    expect(() => parseCreateDraftJson(JSON.stringify(withIds))).toThrow("Juicescan can't launch this file: it has a Sticky split whose group differs by chain.");
     // Weeks the form refused are written as typed, so the file is refused, never read as the last valid group.
     state.stages[0].reservedRecipients[1] = Object.assign(state.stages[0].reservedRecipients[1], { projectId: 4000, stickyError: 'Maximum weeks can\'t be less than minimum weeks.', stickyWeeks: { tenure: true, min: '4', max: '2', hasMax: true } });
     expect(createDraftObject(state).stages[0].reserved[1].sticky).toEqual({ group: 'tenure', minWeeks: '4', maxWeeks: '2' });

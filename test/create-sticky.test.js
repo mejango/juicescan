@@ -95,6 +95,11 @@ describe('Sticky launch checks', () => {
   it('never encodes a row whose weeks were refused, whenever the encoder runs', () => {
     expect(() => splitState(sticky({ projectId: 4052, stickyError: 'Enter whole weeks' }), 1, null, 1, null, false)).toThrow('A split to Sticky holders is not ready: Enter whole weeks');
   });
+  it('encodes the group the row shows, whatever per-chain project id its slot still holds', () => {
+    expect(splitState(sticky({ projectId: 4000 }), 1, null, 1, 8000, false).projectId).toBe(4000);
+    // Another hook keeps its per-chain project id.
+    expect(splitState(sticky({ hookAddress: TOKEN, projectId: 4000 }), 1, null, 1, 8000, false).projectId).toBe(8000);
+  });
   it('reads nothing when no row is Sticky', async () => {
     expect(await stickyRecipientsProblem(stateWith('project', [{ type: 'wallet', address: TOKEN, percent: 10 }]), [1], () => [])).toBe(null);
   });

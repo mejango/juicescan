@@ -76,8 +76,7 @@ export function toJbDraft(state, deps) {
   function splitOut(row, keys, lockOk, amounts) {
     var to = SPLIT_TO[row.type] || 'address';
     // A Sticky row is one token and one valid group on every chain; anything else on the distributor stays a hook row.
-    var stickyGroup = isStickyRecipient(row) && !Object.keys(chainMap(keys.address)).length && !Object.keys(chainMap(keys.projectId, num)).length
-      ? decodeStickyGroupId(row.projectId || 0) : null;
+    var stickyGroup = isStickyRecipient(row) && !Object.keys(chainMap(keys.address)).length ? decodeStickyGroupId(row.projectId || 0) : null;
     if (stickyGroup && (stickyGroup.kind === 'tenure' || !Number(row.projectId))) to = 'sticky';
     // Week fields the form refused are written as typed whatever else the row holds, so the file is refused too,
     // never read as the row's last valid group.
@@ -105,7 +104,8 @@ export function toJbDraft(state, deps) {
     out.addressPerChain = chainMap(keys.address);
     if (to === 'project' || to === 'hook') {
       out.projectId = positive(row.projectId);
-      out.projectIdPerChain = chainMap(keys.projectId, num);
+      // A row on the Sticky distributor launches one group on every chain, so it has no per-chain ids to write.
+      out.projectIdPerChain = isStickyRecipient(row) ? {} : chainMap(keys.projectId, num);
     }
     if (to === 'project') out.addToBalance = !!row.preferAddToBalance;
     if (to === 'hook') out.hook = text(row.hookAddress);
@@ -377,6 +377,7 @@ export function fromJbDraft(file, deps) {
     if (row.to === 'project' || row.to === 'hook') {
       if (row.projectId && !Number.isSafeInteger(Number(row.projectId))) refuse('a project id that is not a whole number');
       out.projectId = Number(row.projectId) || 0;
+      if (isStickyRecipient(out) && hasEntries(row.projectIdPerChain)) refuse('a Sticky split whose group differs by chain');
       chainMapIn(row.projectIdPerChain, keys.projectId);
     }
     return out;
