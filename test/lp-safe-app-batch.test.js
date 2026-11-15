@@ -16,7 +16,7 @@ vi.mock('../src/safe-app.js', async importOriginal => ({ ...await importOriginal
 vi.mock('../src/safe.js', async importOriginal => ({ ...await importOriginal(), listPendingSafeTxs: vi.fn(async () => { if (runtime.pending instanceof Error) throw runtime.pending; return runtime.pending; }) }));
 
 import { proposeSafeTransactions } from '../src/safe-app.js';
-import { lpAddLiquidityCalls, runAddLiquidityTxs } from '../src/discover.js';
+import { lpAddLiquidityCalls, lpApprovalRows, lpSafeBatchPreview, runAddLiquidityTxs } from '../src/discover.js';
 import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '../src/safe-batch.js';
 
 const TOKEN = '0x3333333333333333333333333333333333333333', POSM = '0x4444444444444444444444444444444444444444';
@@ -106,6 +106,46 @@ describe('runAddLiquidityTxs inside the Safe App', () => {
     expect(proposeSafeTransactions).not.toHaveBeenCalled();
     expect(runtime.wallet.writeContract.mock.calls.map(c => [c[0].address, c[0].functionName])).toEqual([[TOKEN, 'approve'], [PERMIT2, 'approve'], [POSM, 'modifyLiquidities']]);
     expect(runtime.client.simulateContract.mock.calls[1][0].args).toEqual([TOKEN, POSM, 1000n, BigInt(NOW + 30 * 24 * 3600)]);
+  });
+});
+
+describe('what a funded change shows before it is confirmed', () => {
+  it('names each approval that will run, and the whole Safe batch with the change as its last call', () => {
+    const funded = { ...prep(), stepLabel: 'liquidity change', finalLabel: 'Increase the position' };
+    expect(lpApprovalRows(funded.erc20, () => 'TKN', 'change')).toEqual([['TKN approval', 'runs before the change']]);
+    expect(lpApprovalRows([{ currency: TOKEN, max: 1n, approved: true, permitReady: false }], () => 'TKN', 'change')[0][1]).toMatch(/only the Permit2 step remains/);
+    const batch = lpSafeBatchPreview(8453, 'Base', funded);
+    expect(batch.transactions.map(t => t.step)).toEqual(['Approve token for Permit2', 'Approve on Permit2', 'Increase the position']);
+    expect(batch.transactions.map(t => t.address)).toEqual([TOKEN, PERMIT2, POSM]);
+    expect(batch.deadline).toBe(BigInt(batch.now + DL));
+    // Nothing left to approve: the change goes alone, and so does a wallet outside the Safe App.
+    expect(lpSafeBatchPreview(8453, 'Base', { ...funded, erc20: [{ currency: TOKEN, max: 1000n, approved: true, permitReady: true }] })).toBeNull();
+    runtime.safeApp = false;
+    expect(lpSafeBatchPreview(8453, 'Base', funded)).toBeNull();
+  });
+});
+
+describe('runAddLiquidityTxs carrying a position edit', () => {
+  const edit = more => ({ ...prep(), erc20: [], value: 0n, stepLabel: 'liquidity change', ...more });
+
+  it('refuses an unfunded Safe edit while a position change waits in the queue', async () => {
+    const queued = lpAddLiquidityCalls(edit(), [], NOW, DL, BigInt(NOW + DL))[0];
+    runtime.pending = [{ nonce: 9, to: queued.to, data: queued.data }];
+    await expect(runAddLiquidityTxs(8453, edit(), vi.fn(), plan())).rejects.toThrow(/The liquidity change is already queued in your Safe \(nonce 9\)/);
+    expect(runtime.wallet.writeContract).not.toHaveBeenCalled();
+  });
+
+  it('reads the position again after the approvals, and sends nothing when it no longer fits', async () => {
+    runtime.safeApp = false;
+    const order = [];
+    runtime.wallet.writeContract = vi.fn(async request => { order.push(request.functionName); return '0x' + 'cd'.repeat(32); });
+    const funded = more => ({ ...prep(), stepLabel: 'liquidity change', ...more });
+    await runAddLiquidityTxs(8453, funded({ recheck: async () => { order.push('recheck'); } }), vi.fn(), plan());
+    expect(order).toEqual(['approve', 'approve', 'recheck', 'modifyLiquidities']);
+    order.length = 0;
+    await expect(runAddLiquidityTxs(8453, funded({ recheck: async () => { throw new Error('This position changed. Review it again before sending.'); } }), vi.fn(), plan()))
+      .rejects.toThrow(/position changed/);
+    expect(order).toEqual(['approve', 'approve']);
   });
 });
 
