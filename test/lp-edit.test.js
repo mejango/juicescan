@@ -122,5 +122,11 @@ describe('the wallet balance gate', () => {
   it('refuses when a balance could not be read, and lets a change that returns funds through', () => {
     expect(lpBalanceProblem(plan, false, { token: null, pair: 5n }, 'TKN', 'ETH')).toMatch(/Could not read/);
     expect(lpBalanceProblem({ tokenFlow: -3n, tokenFunding: 0n, pairFlow: -1n, pairFunding: 0n }, false, { token: 0n, pair: 0n }, 'TKN', 'ETH')).toBeNull();
+    expect(lpBalanceProblem({ tokenFlow: -3n, tokenFunding: 0n, pairFlow: -1n, pairFunding: 0n, value: 0n }, false, { token: null, pair: null }, 'TKN', 'ETH')).toBeNull();
+  });
+  it('needs the whole native value an increase sends, headroom included', () => {
+    var native = { tokenFlow: 0n, tokenFunding: 0n, pairFlow: 100n, pairFunding: 101n, value: 101n };
+    expect(lpBalanceProblem(native, false, { token: 0n, pair: 100n }, 'TKN', 'ETH')).toBe("That's more ETH than your balance.");
+    expect(lpBalanceProblem(native, false, { token: null, pair: 101n }, 'TKN', 'ETH')).toBeNull();
   });
 });

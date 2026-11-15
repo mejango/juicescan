@@ -203,12 +203,15 @@ export function lpEditStillFits(plan, live) {
 }
 
 // Why the wallet cannot fund a reviewed change, or null. Gated on what the pool pulls, not on the maxima, whose
-// 1% headroom is spent only if the price moves; a change that pays in its caps (paysCap) must hold them whole.
+// 1% headroom is spent only if the price moves; a change that pays in its caps (paysCap) must hold them whole,
+// and native value is sent whole, headroom included. A side that pulls nothing is not read against a balance.
 // held: { token, pair } balances, null where a read failed.
 export function lpBalanceProblem(plan, paysCap, held, sym, pairSym) {
-  if (held.token === null || held.pair === null) return 'Could not read your wallet balances.';
-  if ((paysCap ? plan.tokenFunding : plan.tokenFlow) > held.token) return 'That\'s more ' + sym + ' than your balance.';
-  if ((paysCap ? plan.pairFunding : plan.pairFlow) > held.pair) return 'That\'s more ' + pairSym + ' than your balance.';
+  var tokenNeed = paysCap ? plan.tokenFunding : plan.tokenFlow, pairNeed = paysCap ? plan.pairFunding : plan.pairFlow;
+  if (plan.value > pairNeed) pairNeed = plan.value;
+  if ((tokenNeed > 0n && held.token === null) || (pairNeed > 0n && held.pair === null)) return 'Could not read your wallet balances.';
+  if (tokenNeed > 0n && tokenNeed > held.token) return 'That\'s more ' + sym + ' than your balance.';
+  if (pairNeed > 0n && pairNeed > held.pair) return 'That\'s more ' + pairSym + ' than your balance.';
   return null;
 }
 // Refuses a change the wallet cannot fund. pos: a refreshed position of the pool.
