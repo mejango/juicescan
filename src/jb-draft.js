@@ -245,6 +245,11 @@ export function toJbDraft(state, deps) {
   out.bridge = state.suckerType || 'ccip';
   out.owner = text(revnet ? state.revOperator : details.owner);
   out.ownerPerChain = chainMap(revnet ? 'op' : 'owner');
+  // A new Safe is the owner (or the operator): the file names it in place of an address.
+  if (deps.createsSafe(state)) {
+    out.owner = ''; out.ownerPerChain = {};
+    out.safe = { signers: state.authoritySafe.signers.map(text), threshold: state.authoritySafe.threshold };
+  }
   out.customToken = custom ? text((state.customToken || {}).address) : '';
   out.anyToken = state.swapRouter !== false;
   if (!revnet) {
@@ -290,7 +295,6 @@ export function fromJbDraft(file, deps) {
   var state = deps.state();
 
   if (file.stages.length > 20) refuse('more than 20 stages');
-  if (file.safe) refuse('a new Safe as the ' + (revnet ? 'operator' : 'owner'));
   if (!accepts.length) refuse('no accepted token');
   if (!file.chains.length) refuse('no chain chosen');
   var testnet = file.chains.map(function (chainId) {
@@ -553,6 +557,7 @@ export function fromJbDraft(file, deps) {
   details.telegram = file.links.telegram; details.instagram = file.links.instagram; details.whatsapp = file.links.whatsapp;
   if (revnet) state.revOperator = file.owner; else details.owner = file.owner;
   chainAddressesIn(file.ownerPerChain, revnet ? 'op' : 'owner');
+  state.authoritySafe = deps.authoritySafeIn(file.safe ? { on: true, signers: file.safe.signers, threshold: file.safe.threshold } : null);
 
   if (revnet) {
     var base = file.stages[0].baseCurrency;

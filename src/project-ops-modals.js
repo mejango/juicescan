@@ -1,14 +1,15 @@
 // Add-liquidity and move-between-chains modals. Loaded on demand from a project's actions menu.
-import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, openPendingReview, onEffectiveAccountChange, resolveContractName, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isSafeConnected } from './component-base.js';
+import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, openPendingReview, onEffectiveAccountChange, ZERO_ADDRESS, NATIVE_TOKEN, errMessage } from './component-base.js';
 import { quotedOutputFloor } from './slippage.js';
 import { txHashForSafeTx } from './safe-app.js';
+import { lpMarketRoom } from './lp-market.js';
 import {
-  PERMIT2_ADDRESS, POOL_MANAGER_BY_CHAIN, POSITION_MANAGER_BY_CHAIN, acctKindsForFunds,
+  POOL_MANAGER_BY_CHAIN, POSITION_MANAGER_BY_CHAIN, acctKindsForFunds,
   borrowCurrencyForAccountContext, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, cashOutProtocolFee,
   classifySuckerInfra, clientFor, currentSurplusOfAbi, erc20BalanceOfAbi, feeFreeSurplusOfAbi, findToRemoteValue,
   formatBalance, formatEth, formatPrice, formatTokens, isFeelessAddress, issuancePairUnitMismatch,
-  lpAddLiquidityCalls, lpAmountsModeNote, lpDeadlineSecs, lpDefaultRange, lpDepthMarkerLabelLayout,
-  lpFullRangeBounds, lpIsSmartWallet, lpPairFor, lpSolveRangeFromAmounts, lpTrimNum, moveChainName, noteLocalLpWrite,
+  lpAmountsModeNote, lpApprovalRows, lpDeadlineSecs, lpDefaultRange, lpDepthMarkerLabelLayout,
+  lpFullRangeBounds, lpIsSmartWallet, lpPairFor, lpSafeBatchPreview, lpSolveRangeFromAmounts, lpTrimNum, moveChainName, noteLocalLpWrite,
   openTxConfirm, opsChainSelect, opsPercentButtons, pidOn, prepareAddLiquidity, previewCashOutAbi, read,
   readAmmPrice, readCashoutPrice, readIssuancePairRate, readSuckerPairsOf, readUserBalance, readWalletTokenBalance,
   renderBalanceTables, renderExplorerTxLink, resolveAcctToken, resolveFundsKindAcct, runAddLiquidityTxs,
@@ -525,6 +526,16 @@ function lpFmtDuration(secs) {
 }
 
 // Build the "exact transaction" preview payload (mirrors the Pay confirm), for openTxConfirm.
+// What each side of a market being made holds: project tokens above the price, pair tokens below it.
+export function marketSidesLine(prep, sym) {
+  var pair = prep.pair, market = prep.market;
+  var held = function (side, token) { var need = side.need; return token === prep.pairIsC0 ? need.amount1 : need.amount0; };
+  return [
+    market.tokenSide ? formatTokens(held(market.tokenSide, true)) + ' ' + sym + ' selling up to the ceiling' : null,
+    market.pairSide ? formatBalance(held(market.pairSide, false), pair.decimals, pair.symbol) + ' buying down to the floor' : null,
+  ].filter(Boolean).join('; ');
+}
+
 function buildAddLiquidityPayload(chainId, chainName, sym, prep) {
   var pair = prep.pair || { symbol: 'ETH', decimals: 18, isNative: true };
   // amount0Max/amount1Max are currency-ordered; map back to pair vs project token for display.
@@ -534,19 +545,15 @@ function buildAddLiquidityPayload(chainId, chainName, sym, prep) {
   var deposit = [];
   if (tokenMax > 1n) deposit.push(formatTokens(tokenMax) + ' ' + sym);
   if (pairMax > 1n) deposit.push(formatBalance(pairMax, pair.decimals, pair.symbol));
-  var approvalRows = (prep.erc20 || []).map(function (s) {
-    var label = (s.currency || '').toLowerCase() === (pair.addr || '').toLowerCase() ? pair.symbol : sym;
-    return [label + ' approval', s.approved && s.permitReady ? 'already set: no approval step will run'
-      : s.approved ? 'token allowance reused: only the Permit2 step remains'
-      : 'runs before the mint'];
-  });
+  var approvalRows = lpApprovalRows(prep.erc20, function (currency) { return (currency || '').toLowerCase() === (pair.addr || '').toLowerCase() ? pair.symbol : sym; }, 'mint');
   return {
     summary: {
-      action: 'Add liquidity to the ' + sym + '/' + pair.symbol + ' pool',
+      action: (prep.market ? 'Make a market in the ' : 'Add liquidity to the ') + sym + '/' + pair.symbol + ' pool',
       rows: [
-        ['Deposit up to', deposit.join(' + ') + ', the mint pulls only what the position needs'],
-        prep.pa > 0 && prep.pb > prep.pa ? ['Price range', formatPrice(prep.pa) + ' – ' + formatPrice(prep.pb) + ' ' + pair.symbol + ' per ' + sym] : null,
-        ['Position NFT to', prep.acct],
+        ['Deposit up to', deposit.join(' + ') + (prep.market ? ', each side pulls only what its position needs' : ', the mint pulls only what the position needs')],
+        prep.pa > 0 && prep.pb > prep.pa ? [prep.market ? 'Floor to ceiling' : 'Price range', formatPrice(prep.pa) + ' – ' + formatPrice(prep.pb) + ' ' + pair.symbol + ' per ' + sym] : null,
+        prep.market ? ['Positions', marketSidesLine(prep, sym)] : null,
+        [prep.market && prep.market.tokenSide && prep.market.pairSide ? 'Position NFTs to' : 'Position NFT to', prep.acct],
         ['Mint deadline', lpFmtDuration(lpDeadlineSecs(prep)) + (prep.smartWallet ? ', survives a multisig signing queue' : '')],
       ].concat(approvalRows).filter(Boolean),
     },
@@ -563,7 +570,15 @@ function buildAddLiquidityPayload(chainId, chainName, sym, prep) {
           : s.approved ? 'token allowance already set (reused), only the Permit2 approval step remains'
           : 'approval will run first' };
     }),
-    position: {
+    position: prep.market ? {
+      actions: 'MINT_POSITION per side, CLOSE, CLOSE' + (prep.value > 0n ? ', SWEEP' : ''),
+      poolFee: Number(prep.key.fee),
+      hooks: prep.key.hooks,
+      sides: [prep.market.tokenSide, prep.market.pairSide].filter(Boolean).map(function (side) { return { tickLower: side.tickLower, tickUpper: side.tickUpper, liquidity: side.liquidity.toString() }; }),
+      ['max' + pair.symbol]: formatBalance(pairMax, pair.decimals, pair.symbol),
+      maxToken: formatTokens(tokenMax) + ' ' + sym,
+      recipient: prep.acct,
+    } : {
       actions: pair.isNative ? 'MINT_POSITION, CLOSE, CLOSE, SWEEP (0x02121214)' : 'MINT_POSITION, CLOSE, CLOSE (0x021212)',
       poolFee: Number(prep.key.fee),
       hooks: prep.key.hooks,
@@ -693,12 +708,15 @@ export function buildAddLiquidityModal(project) {
   // Sizing mode: "By amounts" (default — type both deposits, the range is solved around them) or
   // "By price range" (pick the range, the counterpart amount follows).
   var modeRow = el('div', 'chain-pills-row'); modeRow.style.marginTop = '8px'; wrap.appendChild(modeRow);
+  // "Make the market" is the default once the project has a floor and a ceiling to make it between.
+  var modeMarketBtn = el('button', 'chain-pill'); modeMarketBtn.type = 'button'; modeMarketBtn.textContent = 'Make the market'; modeRow.appendChild(modeMarketBtn);
+  modeMarketBtn.addEventListener('click', function () { state.modeChosen = true; setMode('market'); });
   var modeAmountsBtn = el('button', 'chain-pill'); modeAmountsBtn.type = 'button'; modeAmountsBtn.textContent = 'By amounts'; modeRow.appendChild(modeAmountsBtn);
   var modeFullBtn = el('button', 'chain-pill'); modeFullBtn.type = 'button'; modeFullBtn.textContent = 'Full range'; modeRow.appendChild(modeFullBtn);
   var modeRangeBtn = el('button', 'chain-pill'); modeRangeBtn.type = 'button'; modeRangeBtn.textContent = 'By price range'; modeRow.appendChild(modeRangeBtn);
-  modeAmountsBtn.addEventListener('click', function () { setMode('amounts'); });
-  modeFullBtn.addEventListener('click', function () { setMode('full'); });
-  modeRangeBtn.addEventListener('click', function () { setMode('range'); });
+  modeAmountsBtn.addEventListener('click', function () { state.modeChosen = true; setMode('amounts'); });
+  modeFullBtn.addEventListener('click', function () { state.modeChosen = true; setMode('full'); });
+  modeRangeBtn.addEventListener('click', function () { state.modeChosen = true; setMode('range'); });
 
   var lblR = el('div', 'modal-label'); lblR.textContent = 'Price range (ETH per ' + sym + ')'; wrap.appendChild(lblR);
   var rnote = el('div', 'modal-balance'); rnote.textContent = 'Defaults span the current cash out reference and token creation price.'; wrap.appendChild(rnote);
@@ -743,8 +761,10 @@ export function buildAddLiquidityModal(project) {
   function applyPairLabels() {
     var ps = pairSym();
     lblR.textContent = 'Price range (' + ps + ' per ' + sym + ')';
-    lbl2.textContent = ps + ' to add';
+    lbl1.textContent = state.mode === 'market' ? sym + ' to sell above the price' : sym + ' to add';
+    lbl2.textContent = state.mode === 'market' ? ps + ' to buy with below the price' : ps + ' to add';
     eu.textContent = ps;
+    if (state.mode === 'market') return;
     if (state.mode !== 'amounts') {
       pairNote.textContent = 'Enter either amount; the other is calculated at the pool price. Near Min uses more '
         + sym + '; near Max uses more ' + ps + '.';
@@ -753,6 +773,7 @@ export function buildAddLiquidityModal(project) {
   applyPairLabels();
 
   function onAmountInput(side) {
+    if (state.mode === 'market') return; // each side stands alone
     if (state.mode === 'amounts') { solveAmounts(); return; }
     state.driver = side;
     autofill();
@@ -807,8 +828,28 @@ export function buildAddLiquidityModal(project) {
     autofill();
   }
 
+  // A market spans the floor to the ceiling: project tokens sell above the price, pair tokens buy below it. A side
+  // whose half the price has left cannot be placed.
+  function hasCorridor() { return state.floor > 0 && ceiling > state.floor; }
+  function applyMarket() {
+    var ps = pairSym(), room = hasCorridor() && state.poolP > 0 ? lpMarketRoom(state.poolP, { floor: state.floor, ceiling: ceiling }) : { token: true, pair: true };
+    if (hasCorridor()) { minInput.value = lpTrimNum(state.floor); maxInput.value = lpTrimNum(ceiling); }
+    tokAmt.disabled = !room.token; ethAmt.disabled = !room.pair;
+    tokCol.style.opacity = room.token ? '' : '0.45'; ethCol.style.opacity = room.pair ? '' : '0.45';
+    tokMax.style.visibility = room.token ? '' : 'hidden'; ethMax.style.visibility = room.pair ? '' : 'hidden';
+    if (!room.token) tokAmt.value = '0';
+    if (!room.pair) ethAmt.value = '0';
+    pairNote.textContent = !hasCorridor() ? 'This project has no floor and ceiling to make a market between.'
+      : sym + ' sells as the price rises to the ceiling. ' + ps + ' buys as it falls to the floor. Each amount is used in full.'
+        + (!room.token ? ' The price is at or above the ceiling, so only the ' + ps + ' side can be placed right now.'
+          : !room.pair ? ' The price is at or below the floor, so only the ' + sym + ' side can be placed right now.' : '');
+    drawGraph();
+  }
+
   function setMode(mode) {
     state.mode = mode;
+    modeMarketBtn.classList.toggle('selected', mode === 'market');
+    btn.textContent = mode === 'market' ? 'Make the market' : 'Add liquidity';
     modeAmountsBtn.classList.toggle('selected', mode === 'amounts');
     modeFullBtn.classList.toggle('selected', mode === 'full');
     modeRangeBtn.classList.toggle('selected', mode === 'range');
@@ -827,7 +868,9 @@ export function buildAddLiquidityModal(project) {
     tokCol.style.opacity = ''; ethCol.style.opacity = '';
     tokMax.style.visibility = ''; ethMax.style.visibility = '';
     sideNote.style.display = 'none'; sideNote.textContent = '';
-    if (mode === 'amounts') solveAmounts();
+    applyPairLabels();
+    if (mode === 'market') applyMarket();
+    else if (mode === 'amounts') solveAmounts();
     else applyFullRange();
   }
 
@@ -911,6 +954,7 @@ export function buildAddLiquidityModal(project) {
     }
   }
   function onRangeChange() {
+    if (state.mode === 'market') { applyMarket(); return; }
     if (state.mode === 'amounts') { solveAmounts(); return; }
     if (state.mode === 'full') { applyFullRange(); return; }
     drawGraph(); applySides(); autofill();
@@ -974,6 +1018,8 @@ export function buildAddLiquidityModal(project) {
         : (state.floor > 0
           ? 'The floor and ceiling do not straddle the pool price. The default range is widened so both tokens can be added.'
           : 'No cash out reference yet. The default range is wider around the trading price so both tokens can be added.');
+      // Until a mode is picked by hand, the form opens on the market when there is a corridor to make it in.
+      if (!state.modeChosen) { var opening = hasCorridor() ? 'market' : 'amounts'; if (opening !== state.mode) { setMode(opening); return; } }
       onRangeChange();
     }).catch(function () {
       if (seq !== lpPriceSeq || state.chainId !== cid || state.pair !== pair) return;
@@ -990,7 +1036,9 @@ export function buildAddLiquidityModal(project) {
     if (!(getAccount && getAccount())) { connect(); return; }
     if (!state.pair) { status.className = 'modal-status error'; status.textContent = 'Could not verify the project’s accounting token.'; return; }
     var cid = state.chainId;
-    var inputSnapshot = [minInput.value, maxInput.value, tokAmt.value, ethAmt.value, dlSel.value].join('|');
+    var snapshot = function () { return [state.mode, minInput.value, maxInput.value, tokAmt.value, ethAmt.value, dlSel.value].join('|'); };
+    var inputSnapshot = snapshot(), asMarket = state.mode === 'market';
+    if (asMarket && !hasCorridor()) { status.className = 'modal-status error'; status.textContent = 'This project has no floor and ceiling to make a market between.'; return; }
     var pairAmount, tokenAmount;
     try { pairAmount = ethAmt.value ? parseAmount(ethAmt.value, pairDec()) : 0n; } catch (_) { status.className = 'modal-status error'; status.textContent = 'Invalid ' + pairSym() + ' amount'; return; }
     try { tokenAmount = tokAmt.value ? parseAmount(tokAmt.value, 18) : 0n; } catch (_) { status.className = 'modal-status error'; status.textContent = 'Invalid ' + sym + ' amount'; return; }
@@ -1002,9 +1050,10 @@ export function buildAddLiquidityModal(project) {
     if (!(r.pa > 0) || !(r.pb > r.pa)) { status.className = 'modal-status error'; status.textContent = 'Set a valid price range'; return; }
     btn.disabled = true;
     status.className = 'modal-status'; status.textContent = 'Preparing…';
-    var lpOpts = { project: project, chainId: cid, pairAmount: pairAmount, tokenAmount: tokenAmount, pa: r.pa, pb: r.pb, deadlineSecs: dlSel.value ? Number(dlSel.value) : null };
+    var lpOpts = { project: project, chainId: cid, pairAmount: pairAmount, tokenAmount: tokenAmount, pa: r.pa, pb: r.pb, deadlineSecs: dlSel.value ? Number(dlSel.value) : null,
+      market: asMarket ? { floor: state.floor, ceiling: ceiling } : null };
     prepareAddLiquidity(lpOpts).then(function (prep) {
-      if (state.chainId !== cid || inputSnapshot !== [minInput.value, maxInput.value, tokAmt.value, ethAmt.value, dlSel.value].join('|')
+      if (state.chainId !== cid || inputSnapshot !== snapshot()
         || !state.pair || state.pair.addr !== prep.pair.addr || !getAccount() || getAccount().toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Liquidity inputs or the connected account changed while the transaction was being prepared. Review and try again.');
       btn.disabled = false;
       status.textContent = '';
@@ -1016,22 +1065,12 @@ export function buildAddLiquidityModal(project) {
         if (!s.approved) lpSteps.push('Approve ' + label + ' for Permit2');
         if (!s.permitReady) lpSteps.push(prep.smartWallet ? 'Approve ' + label + ' on Permit2' : 'Sign the ' + label + ' Permit2 approval');
       });
-      lpSteps.push('Mint the position');
+      lpSteps.push(prep.market ? 'Mint the market' : 'Mint the position');
       // Inside the Safe App a multi-call sequence is proposed as ONE batch: preview every call with the exact
       // now/deadline the submit reuses, and replace the per-step wallet list with the single proposal.
       var payload = buildAddLiquidityPayload(cid, chainName, sym, prep);
-      var plan = null;
-      if (prep.smartWallet && isSafeConnected()) {
-        var planNow = Math.floor(Date.now() / 1000), planDl = lpDeadlineSecs(prep);
-        var planned = lpAddLiquidityCalls(prep, (prep.erc20 || []).map(function (s) { return { approve: !s.approved, permit2: !s.permitReady }; }), planNow, planDl, BigInt(planNow + planDl));
-        if (planned.length > 1) {
-          plan = { now: planNow, deadline: BigInt(planNow + planDl), calls: planned };
-          payload.transactions = planned.map(function (c) {
-            return { step: c.label, chain: chainName, chainId: cid, contract: resolveContractName(c.to, cid) || (c.to === PERMIT2_ADDRESS ? 'Permit2' : c.to === prep.posm ? 'Uniswap V4 PositionManager' : c.to),
-              address: c.to, calldata: c.data, abi: c.abi, functionName: c.functionName, rawArgs: c.args, value: String(c.value) };
-          });
-        }
-      }
+      var plan = lpSafeBatchPreview(cid, chainName, prep);
+      if (plan) payload.transactions = plan.transactions;
       openTxConfirm(payload, function (ctx) {
         ctx.confirm.disabled = true; ctx.cancel.disabled = true;
         runAddLiquidityTxs(cid, prep, function (m, kind, meta) { ctx.showStatus(m, kind, meta); }, plan).then(function (result) {

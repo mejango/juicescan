@@ -9,7 +9,9 @@ import { gzipSync } from 'node:zlib';
 // measures startup 3,833,909 B raw and total 2,082,544 B gzip; only those two ceilings rose.
 // Parity with juicebox.money (2026-11) adds pay card and review logic that must load with the project page:
 // startup measures 722,045 B gzip, and the ceiling rose to about 2% above it.
-const startupBudget = { raw: 3_930_000, gzip: 736_000 };
+// The old-pool position move, the raised-by-chain hover and the exact pay route choice load with the project page:
+// startup measures 736,158 B gzip.
+const startupBudget = { raw: 3_930_000, gzip: 738_000 };
 
 const budgets = {
   // Open-first states (pending review rows, busy buttons, stale-while-refreshing marks) measure 248,424 B raw, 50,173 B gzip.
@@ -106,7 +108,11 @@ const totalGzip = (await Promise.all(distributionFiles.map(gzipOf))).reduce((sum
 // Open-first (2026-11): the pending review, handoff and placeholder code measures 2,125,335 B gzip in total.
 // Shared .jb draft plus operator gates, header links and stats, and the not-found state: measured 2,135,380 B gzip.
 // Simple flavor, held-writes list, per-chain pay notice, holdings chart and queue review lines: measured 2,141,685 B gzip.
-const totalGzipBudget = 2_143_000;
+// Splits and details review lines, and finishing a paid relayed launch's unfinished chains: measured 2,144,877 B gzip.
+// A new Safe as owner or operator at launch (address prediction, the creation batch, on-chain verification, the signer editor): measured 2,149,531 B gzip.
+// The old-pool move, raised by chain, the issuance preview and the lazy position editor: measured 2,153,861 B gzip.
+// The two-sided market: its builders, the market mode of the add form and the market editor: measured 2,160,828 B gzip.
+const totalGzipBudget = 2_163_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);

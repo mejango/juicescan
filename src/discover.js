@@ -17,7 +17,7 @@ import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './t
 import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
 import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
-import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive, payRouteIsBetter } from './pay-preview.js';
+import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive, bestPayRoute } from './pay-preview.js';
 import { PAY_QUOTE_FAILED_MESSAGE, V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from './pay-prepare.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
@@ -4428,7 +4428,8 @@ var _dataHookCache = {};
 function projectDataHook(project, chainId, opts) {
   var pid = pidOn(project, chainId);
   var k = chainId + ':' + pid.toString();
-  if (_dataHookCache[k] !== undefined) return Promise.resolve(_dataHookCache[k]);
+  // `fresh` re-reads: a call built for the CURRENT pool must not use a ruleset read when the page opened.
+  if (!(opts && opts.fresh) && _dataHookCache[k] !== undefined) return Promise.resolve(_dataHookCache[k]);
   return read(chainId, 'JBDirectory', controllerOfAbi, 'controllerOf', [pid]).then(function (controller) {
     if (!controller || controller === ZERO_ADDRESS) { _dataHookCache[k] = { hook: ZERO_ADDRESS, rulesetId: 0n, useDataHookForPay: false, useDataHookForCashOut: false }; return _dataHookCache[k]; }
     return clientFor(chainId).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] })
@@ -4447,7 +4448,7 @@ function projectDataHook(project, chainId, opts) {
 export function projectBuybackHook(project, chainId, opts) {
   var client = clientFor(chainId);
   return resolveBuybackHook({
-    ruleset: function () { return projectDataHook(project, chainId, { strict: true }); },
+    ruleset: function () { return projectDataHook(project, chainId, { strict: true, fresh: !!(opts && opts.fresh) }); },
     read: function (address, abi, functionName, args) { return client.readContract({ address: address, abi: abi, functionName: functionName, args: args }); },
     is: function (address, name) { return generationAddresses(name, chainId).some(function (deployed) { return sameAddr(deployed, address); }); },
   }, pidOn(project, chainId), opts && opts.direction).catch(function (e) { if (opts && opts.strict) throw e; return null; });
@@ -6398,14 +6399,40 @@ function appendIndexedStats(statLine, stats) {
   statLine.appendChild(document.createTextNode(stats.paymentsCount === 1 ? ' payment' : ' payments'));
 }
 
+// What each chain raised in dollars, for the hover on the header's raised figure, chains in the project's own
+// order. Empty unless at least one chain raised.
+export function raisedByChainRows(byChain, order) {
+  var rank = function (cid) { var i = (order || []).indexOf(Number(cid)); return i < 0 ? 1e9 : i; };
+  return (byChain || []).filter(function (row) { return toBigInt(row.volumeUsd) > 0n; })
+    .sort(function (a, b) { return rank(a.chainId) - rank(b.chainId); })
+    .map(function (row) {
+      // Dollars only: a chain that took more than one token has no single token amount to state.
+      return { name: chainNameOf(row.chainId), text: formatUsd(usdFromScaled(row.volumeUsd)) };
+    });
+}
+
 // The header's stat line, the same four juicebox.money shows: raised | balance | payments | owners or holders.
 // "raised" appears only when the indexed USD volume is priced; revnet holders are owners.
 export function appendHeaderStats(statLine, project) {
   var stats = project.indexedStats;
   var raised = stats ? usdFromScaled(stats.volumeUsd) : 0;
   if (raised > 0) {
-    var rStrong = el('strong'); rStrong.textContent = formatUsd(raised); statLine.appendChild(rStrong);
-    statLine.appendChild(document.createTextNode(' raised'));
+    var rWrap = el('span', 'usd-balance');
+    var rStrong = el('strong', 'usd-balance-fig'); rStrong.textContent = formatUsd(raised); rWrap.appendChild(rStrong);
+    rWrap.appendChild(document.createTextNode(' raised'));
+    var rows = raisedByChainRows(stats.byChain, (project.chains || []).map(function (c) { return Number(c.id); }));
+    if (rows.length) {
+      // The same hover the balance has: what each chain raised, then the total.
+      var pop = el('div', 'usd-balance-pop');
+      rows.concat([{ name: 'All chains', text: formatUsd(raised), total: true }]).forEach(function (r) {
+        var row = el('div', 'usd-balance-pop-row' + (r.total ? ' usd-balance-pop-total' : ''));
+        var name = el('span', 'usd-balance-pop-chain'); name.textContent = r.name;
+        var val = el('span', 'usd-balance-pop-amt'); val.textContent = r.text;
+        row.appendChild(name); row.appendChild(val); pop.appendChild(row);
+      });
+      rWrap.classList.add('usd-balance--has-pop'); rWrap.appendChild(pop);
+    }
+    statLine.appendChild(rWrap);
     statLine.appendChild(headSep());
   }
   statLine.appendChild(mountUsdBalance(project, { suffix: ' balance' }));
@@ -10365,8 +10392,10 @@ export function renderPayCard(project, cart) {
           slippageBps: paySlippageBps(amt, getEffectiveAccount()),
         }).then(function (preview) { return { preview: Object.assign({}, preview, { terminal: route.address, viaRouter: route.viaRouter }), viaRouter: route.viaRouter }; });
       })).then(function (quoted) {
-        // The token's own entry is first, so its reason shows when neither route can be quoted.
-        return quoted.reduce(function (best, route) { return payRouteIsBetter(route, best) ? route : best; }).preview;
+        // The token's own entry is first, so its reason shows when neither route can be quoted. With a wallet
+        // connected, each route is run as the payer and the one that delivers the most wins.
+        return bestPayRoute(quoted, { chainId: state.chainId, projectId: pidOn(project, state.chainId), token: state.token.address,
+          amount: amt, beneficiary: getEffectiveAccount(), payer: getEffectiveAccount() }).then(function (route) { return route.preview; });
       });
     request.then(function (p) {
       if (gen !== previewGen) return;
@@ -21251,6 +21280,8 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
 }
 
 // Render the chart into a wrap + attach a hover tooltip/guide showing each series' value at that time.
+// The create wizard previews a draft's schedule on the same ladder.
+export { mountChart as mountIssuancePriceChart };
 function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHistory, ammHistory, showEveryTrade, pool) {
   var c = issuanceChartSvg(sorted, now, years, sym, amm, cashout, past, cashoutHistory, ammHistory, showEveryTrade, pool && pool.reserves);
   var holder = wrap.querySelector('.chart-holder');
@@ -21910,6 +21941,8 @@ export var BENDYSTRAW_PROJECT_QUERY = 'query($where: projectFilter, $limit: Int!
   + 'suckerGroupId tokenSupply volumeUsd paymentsCount contributorsCount createdAt accountingTokenCount token tokenSymbol decimals '
   + 'metadataUri metadata handle name description projectTagline logoUri coverImageUri infoUri payDisclosure '
   + 'tags twitter farcaster discord telegram domain tokens } } }';
+var BENDYSTRAW_RAISED_BY_CHAIN_QUERY = 'query($suckerGroupId: String!, $version: Int!, $limit: Int!) { '
+  + 'projects(where: { suckerGroupId: $suckerGroupId, version: $version }, limit: $limit) { items { chainId volumeUsd } } }';
 // Cross-chain aggregate stats for a sucker group (the honest omnichain totals).
 var BENDYSTRAW_SUCKER_GROUP_STATS_QUERY = 'query($ids: [String], $limit: Int!) { '
   + 'suckerGroups(where: { id_in: $ids }, limit: $limit) { items { id volumeUsd paymentsCount contributorsCount } } }';
@@ -22683,6 +22716,12 @@ async function fetchProjectIndexedStats(id, chainId) {
     if (p.suckerGroupId) {
       var agg = await optionalWithin(loadBendystrawSuckerGroupStats(p.suckerGroupId, p.suckerGroupId)
         .catch(function () { return null; }), INDEXED_STATS_TIMEOUT_MS, null);
+      // Each chain's share, for the raised hover. Its absence only removes the hover.
+      stats.byChain = await optionalWithin(bendystrawQuery(BENDYSTRAW_RAISED_BY_CHAIN_QUERY, { suckerGroupId: p.suckerGroupId, version: BENDYSTRAW_VERSION, limit: 20 })
+        .then(function (data) { return (data && data.projects && data.projects.items) || []; })
+        .catch(function () { return []; }), INDEXED_STATS_TIMEOUT_MS, []);
+      // Without the group total the headline is this chain's own figure: no breakdown beside it.
+      if (!agg) stats.byChain = [];
       if (agg) {
         stats.volumeUsd = agg.volumeUsd;
         stats.paymentsCount = Number(agg.paymentsCount) || 0;
@@ -30196,7 +30235,7 @@ var LP_PERMIT2_TYPES = {
 };
 
 // TickMath.getSqrtPriceAtTick — exact integer port (v4-core).
-function lpSqrtAtTick(tick) {
+export function lpSqrtAtTick(tick) {
   tick = Number(tick);
   var absTick = tick < 0 ? -tick : tick;
   if (absTick > 887272) throw new Error('tick out of range');
@@ -30226,7 +30265,7 @@ function lpSqrtAtTick(tick) {
 function lpSortPair(a, b) { return a > b ? [b, a] : [a, b]; }
 function lpLiqForAmount0(sa, sb, amount0) { var p = lpSortPair(sa, sb); sa = p[0]; sb = p[1]; var inter = (sa * sb) / LP_Q96; return (amount0 * inter) / (sb - sa); }
 function lpLiqForAmount1(sa, sb, amount1) { var p = lpSortPair(sa, sb); sa = p[0]; sb = p[1]; return (amount1 * LP_Q96) / (sb - sa); }
-function lpGetLiquidityForAmounts(sp, sa, sb, amount0, amount1) {
+export function lpGetLiquidityForAmounts(sp, sa, sb, amount0, amount1) {
   var pr = lpSortPair(sa, sb); sa = pr[0]; sb = pr[1];
   if (sp <= sa) return lpLiqForAmount0(sa, sb, amount0);
   if (sp < sb) { var l0 = lpLiqForAmount0(sp, sb, amount0); var l1 = lpLiqForAmount1(sa, sp, amount1); return l0 < l1 ? l0 : l1; }
@@ -30234,7 +30273,7 @@ function lpGetLiquidityForAmounts(sp, sa, sb, amount0, amount1) {
 }
 function lpAmount0ForL(sa, sb, L) { var p = lpSortPair(sa, sb); sa = p[0]; sb = p[1]; return (((L << 96n) * (sb - sa)) / sb) / sa; }
 function lpAmount1ForL(sa, sb, L) { var p = lpSortPair(sa, sb); sa = p[0]; sb = p[1]; return (L * (sb - sa)) / LP_Q96; }
-function lpGetAmountsForLiquidity(sp, sa, sb, L) {
+export function lpGetAmountsForLiquidity(sp, sa, sb, L) {
   var pr = lpSortPair(sa, sb); sa = pr[0]; sb = pr[1];
   if (sp <= sa) return { amount0: lpAmount0ForL(sa, sb, L), amount1: 0n };
   if (sp < sb) return { amount0: lpAmount0ForL(sp, sb, L), amount1: lpAmount1ForL(sa, sp, L) };
@@ -30858,22 +30897,15 @@ export function lpClampToAllowances(max, need, erc20Allow, p2Amount) {
 // PositionManager.modifyLiquidities (MINT_POSITION, CLOSE c0, CLOSE c1, SWEEP native refund).
 // Read-only: derive ticks, liquidity, required amounts, and the encoded modifyLiquidities calldata.
 // No wallet/txs — used to build the preview before the user signs.
-async function prepareAddLiquidity(opts) {
-  var project = opts.project, chainId = opts.chainId;
-  var acct = getAccount();
-  if (!acct) throw new Error('Connect a wallet to continue');
-  var posm = POSITION_MANAGER_BY_CHAIN[chainId];
-  if (!posm) throw new Error('No position manager on this chain');
-
-  var st = await readPoolState(project, chainId, { strict: true });
-  if (!st || !st.key) throw new Error('Pool not initialized on this chain');
-  var key = st.key, sqrtP = st.sqrtP, pair = st.pair;
-  var c0 = (key.currency0 || '').toLowerCase();
-  var pairIsC0 = (c0 === pair.addr); // else the project token (always ERC-20) is currency0
-  var pairDec = pair.decimals;
+// Size a Uniswap V4 mint from a price range and deposit amounts at the pool's live price: the ticks, the
+// liquidity, what it needs, and the maxima with 1% headroom. Pure: no wallet, no reads. `pool` is
+// { key, sqrtP, pair: { decimals }, pairIsC0 }; the range is pair per token.
+export function lpMintPlan(pool, pairAmount, tokenAmount, pa, pb) {
+  var key = pool.key, sqrtP = pool.sqrtP, pairIsC0 = pool.pairIsC0;
+  var pairDec = pool.pair.decimals;
   // Map the pair/token deposit amounts (raw, in their own decimals) onto currency0/currency1 by ordering.
-  var amount0 = pairIsC0 ? opts.pairAmount : opts.tokenAmount;
-  var amount1 = pairIsC0 ? opts.tokenAmount : opts.pairAmount;
+  var amount0 = pairIsC0 ? pairAmount : tokenAmount;
+  var amount1 = pairIsC0 ? tokenAmount : pairAmount;
 
   var s = Number(key.tickSpacing);
   var maxUsable = Math.trunc(887272 / s) * s, minUsable = Math.trunc(-887272 / s) * s;
@@ -30881,8 +30913,8 @@ async function prepareAddLiquidity(opts) {
   //   pair=c0 → P_raw = 10^(18−pairDec)/q ;  token=c0 → P_raw = q·10^(pairDec−18).
   // ticks are monotonic in P_raw, so derive both ends and sort (order-agnostic across the two cases).
   var pRawFromQ = function (q) { return pairIsC0 ? (Math.pow(10, 18 - pairDec) / q) : (q * Math.pow(10, pairDec - 18)); };
-  var tA = Math.log(pRawFromQ(opts.pa)) / Math.log(1.0001);
-  var tB = Math.log(pRawFromQ(opts.pb)) / Math.log(1.0001);
+  var tA = Math.log(pRawFromQ(pa)) / Math.log(1.0001);
+  var tB = Math.log(pRawFromQ(pb)) / Math.log(1.0001);
   var tickLower = Math.max(minUsable, lpAlignDown(Math.floor(Math.min(tA, tB)), s));
   var tickUpper = Math.min(maxUsable, lpAlignUp(Math.ceil(Math.max(tA, tB)), s));
   if (tickUpper <= tickLower) tickUpper = Math.min(maxUsable, tickLower + s);
@@ -30904,24 +30936,101 @@ async function prepareAddLiquidity(opts) {
   var amount0Max = need.amount0 + need.amount0 / 100n + 1n;
   var amount1Max = need.amount1 + need.amount1 / 100n + 1n;
 
+  return { tickLower: tickLower, tickUpper: tickUpper, liquidity: liquidity, need: need, amount0Max: amount0Max, amount1Max: amount1Max };
+}
+
+// One ERC-20 side's standing allowances (token to Permit2, Permit2 to the position manager) against what a
+// liquidity change may pull: { currency, max, approved, permitReady }. `need` below `max` lets an earlier
+// allowance that covers the exact need stand in for the padded maximum.
+async function lpSideAllowances(chainId, acct, posm, smartWallet, currency, max, need) {
+  var client = clientFor(chainId);
+  // An allowance must outlive the queue: a Safe's call can execute a day or more after it is proposed.
+  var p2Fresh = Math.floor(Date.now() / 1000) + (smartWallet ? 86400 : 0);
+  var erc20Allow = BigInt(await client.readContract({ address: currency, abi: lpErc20Abi, functionName: 'allowance', args: [acct, PERMIT2_ADDRESS] }));
+  var p2 = await client.readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [acct, currency, posm] });
+  var p2Amount = Number(p2[1]) > p2Fresh ? BigInt(p2[0]) : null;
+  return Object.assign({ currency: currency }, lpClampToAllowances(max, need, erc20Allow, p2Amount));
+}
+// The sides of a change whose maxima are fixed inside its calls: each needs its allowances whole.
+function lpWithAllowanceFlags(chainId, acct, posm, smartWallet, erc20) {
+  return Promise.all((erc20 || []).map(function (side) { return lpSideAllowances(chainId, acct, posm, smartWallet, side.currency, side.max, side.max); }));
+}
+// The review's row per funded ERC-20 side: whether an approval runs before the call named by `before`.
+function lpApprovalRows(erc20, labelOf, before) {
+  return (erc20 || []).map(function (side) {
+    return [labelOf(side.currency) + ' approval', side.approved && side.permitReady ? 'already set: no approval step will run'
+      : side.approved ? 'token allowance reused: only the Permit2 step remains'
+      : 'runs before the ' + before];
+  });
+}
+// Inside the Safe App a funded change is proposed as one batch. Its calls as the review lists them, with the
+// now/deadline the submit reuses; null when one call remains and it is sent on its own.
+function lpSafeBatchPreview(chainId, chainName, prep) {
+  if (!prep.smartWallet || !isSafeConnected()) return null;
+  var now = Math.floor(Date.now() / 1000), dlSecs = lpDeadlineSecs(prep), deadline = BigInt(now + dlSecs);
+  var calls = lpAddLiquidityCalls(prep, (prep.erc20 || []).map(function (side) { return { approve: !side.approved, permit2: !side.permitReady }; }), now, dlSecs, deadline);
+  if (calls.length < 2) return null;
+  return { now: now, deadline: deadline, calls: calls, transactions: calls.map(function (call) {
+    return { step: call.label, chain: chainName, chainId: chainId, contract: resolveContractName(call.to, chainId) || (call.to === PERMIT2_ADDRESS ? 'Permit2' : call.to === prep.posm ? 'Uniswap V4 PositionManager' : call.to),
+      address: call.to, calldata: call.data, abi: call.abi, functionName: call.functionName, rawArgs: call.args, value: String(call.value) };
+  }) };
+}
+
+// The floor (cash out price) and ceiling (issuance price) a market is made between, in pair per token; 0 where
+// one cannot be read in the pair's unit.
+async function lpCorridor(project, chainId) {
+  var weight = project.ruleset ? Number(project.ruleset.weight) : 0;
+  var ceiling = weight > 0 ? 1e18 / weight : 0;
+  if (ceiling > 0 && issuancePairUnitMismatch(project)) {
+    var rate = await readIssuancePairRate(project, chainId).catch(function () { return null; });
+    ceiling = rate ? ceiling * rate : 0;
+  }
+  var floor = await readCashoutPrice(project, chainId);
+  return { floor: floor > 0 ? floor : 0, ceiling: ceiling };
+}
+
+async function prepareAddLiquidity(opts) {
+  var project = opts.project, chainId = opts.chainId;
+  var acct = getAccount();
+  if (!acct) throw new Error('Connect a wallet to continue');
+  var posm = POSITION_MANAGER_BY_CHAIN[chainId];
+  if (!posm) throw new Error('No position manager on this chain');
+
+  var st = await readPoolState(project, chainId, { strict: true });
+  if (!st || !st.key) throw new Error('Pool not initialized on this chain');
+  var key = st.key, sqrtP = st.sqrtP, pair = st.pair;
+  var c0 = (key.currency0 || '').toLowerCase();
+  var pairIsC0 = (c0 === pair.addr); // else the project token (always ERC-20) is currency0
+  // A market (opts.market = { floor, ceiling }) is two single-sided mints in one call, each with its own maxima.
+  var market = null;
+  if (opts.market) {
+    var marketModule = await import('./lp-market.js').catch(function () { throw chunkFailure(); });
+    market = marketModule.lpMarketMint({ key: key, sqrtP: sqrtP, pair: pair, pairIsC0: pairIsC0, price: marketModule.lpDisplayPrice(sqrtP, pair, pairIsC0) },
+      opts.tokenAmount, opts.pairAmount, opts.market, acct);
+  }
+  var sized = market || lpMintPlan({ key: key, sqrtP: sqrtP, pair: pair, pairIsC0: pairIsC0 }, opts.pairAmount, opts.tokenAmount, opts.pa, opts.pb);
+  var tickLower = sized.tickLower, tickUpper = sized.tickUpper, liquidity = sized.liquidity, need = sized.need;
+  var amount0Max = sized.amount0Max, amount1Max = sized.amount1Max;
+
   // The native side (only ever the pair, when it's ETH) is sent as msg.value; ERC-20 sides go via Permit2.
   var c0Native = pairIsC0 && pair.isNative;
   var c1Native = !pairIsC0 && pair.isNative;
 
   // Contract wallets (Safes) can take a day+ per signing round, so allowances set on an earlier visit must
   // survive a return trip.
-  var client = clientFor(chainId);
   var smartWallet = await lpIsSmartWallet(chainId, acct);
-  // An allowance must outlive the queue: a Safe's mint tx can execute a day+ after it's proposed.
-  var p2Fresh = Math.floor(Date.now() / 1000) + (smartWallet ? 86400 : 0);
 
-  async function sideWithAllowances(currency, max, need) {
-    var erc20Allow = BigInt(await client.readContract({ address: currency, abi: lpErc20Abi, functionName: 'allowance', args: [acct, PERMIT2_ADDRESS] }));
-    var p2 = await client.readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [acct, currency, posm] });
-    var p2Amount = Number(p2[1]) > p2Fresh ? BigInt(p2[0]) : null;
-    return Object.assign({ currency: currency }, lpClampToAllowances(max, need, erc20Allow, p2Amount));
-  }
+  function sideWithAllowances(currency, max, need) { return lpSideAllowances(chainId, acct, posm, smartWallet, currency, max, need); }
   var erc20 = [];
+  if (market) {
+    // The maxima sit inside each side's own mint, so an earlier allowance is reused only when it covers them whole.
+    erc20 = await lpWithAllowanceFlags(chainId, acct, posm, smartWallet, market.erc20);
+    return {
+      posm: posm, key: key, acct: acct, market: market, need: need, amount0Max: amount0Max, amount1Max: amount1Max, value: market.value,
+      unlockData: market.unlockData, pairIsC0: pairIsC0, pair: pair, erc20: erc20, smartWallet: smartWallet,
+      pa: opts.market.floor, pb: opts.market.ceiling, deadlineSecs: opts.deadlineSecs || null, poolId: uniswapV4PoolId(key),
+    };
+  }
   if (!c0Native && amount0Max > 1n) { var s0 = await sideWithAllowances(key.currency0, amount0Max, need.amount0); amount0Max = s0.max; erc20.push(s0); }
   if (!c1Native && amount1Max > 1n) { var s1 = await sideWithAllowances(key.currency1, amount1Max, need.amount1); amount1Max = s1.max; erc20.push(s1); }
   var value = c0Native ? amount0Max : (c1Native ? amount1Max : 0n);
@@ -31004,7 +31113,7 @@ export function lpAddLiquidityCalls(prep, needs, now, dlSecs, deadline) {
     if (need.approve) calls.push(Object.assign({ label: 'Approve token for Permit2', guard: [side.currency, lpErc20ApprovePrefix(PERMIT2_ADDRESS), 'The token approval'] }, lpApproveTokenCall(side)));
     if (need.permit2) calls.push(Object.assign({ label: 'Approve on Permit2', guard: [PERMIT2_ADDRESS, LP_SEL_PERMIT2_APPROVE, 'The Permit2 approval'] }, lpPermit2ApproveCall(side, prep.posm, now, dlSecs)));
   });
-  calls.push(Object.assign({ label: 'Mint the position', guard: [prep.posm, LP_SEL_MODIFY_LIQUIDITIES, 'The liquidity mint'], dependsOnPrior: calls.length > 0 }, lpMintCall(prep, deadline)));
+  calls.push(Object.assign({ label: prep.finalLabel || 'Mint the position', guard: [prep.posm, LP_SEL_MODIFY_LIQUIDITIES, 'The ' + (prep.stepLabel || 'liquidity mint')], dependsOnPrior: calls.length > 0 }, lpMintCall(prep, deadline)));
   return calls.map(function (c) {
     return Object.assign({}, c, { to: c.address, value: c.value || 0n, data: encodeFunctionData({ abi: c.abi, functionName: c.functionName, args: c.args }) });
   });
@@ -31146,8 +31255,11 @@ export async function runAddLiquidityTxs(chainId, prep, onStatus, plan) {
     }
   }
 
-  await guardQueued(posm, LP_SEL_MODIFY_LIQUIDITIES, 'The liquidity mint');
-  onStatus(prep.smartWallet ? proposeMsg('the liquidity mint') : 'Adding liquidity…', 'pending', { step: -1 });
+  // An edit names its own step, and reads its position again here: approvals above can take a while.
+  var stepLabel = prep.stepLabel || 'liquidity mint';
+  await guardQueued(posm, LP_SEL_MODIFY_LIQUIDITIES, 'The ' + stepLabel);
+  if (prep.recheck) await prep.recheck();
+  onStatus(prep.smartWallet ? proposeMsg('the ' + stepLabel) : (prep.sendingLine || 'Adding liquidity…'), 'pending', { step: -1 });
   if (!getAccount() || getAccount().toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Connected account changed. Review the liquidity transaction again.');
   if (permitDatas.length) {
     var mintData = encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, deadline] });
@@ -31394,183 +31506,137 @@ export function lpBandPricesOf(pos) {
   return { min: Math.min(a, b), max: Math.max(a, b) };
 }
 
-// Encode a one-transaction band move: BURN_POSITION(old) + MINT_POSITION(new ticks) + CLOSE_CURRENCY(c0) +
-// CLOSE_CURRENCY(c1) (0x03021212). Deltas net inside the unlock, so the burn's credit funds the mint — no
-// Permit2, no msg.value — and the closes return unclaimed fees plus whatever the new band doesn't consume.
-// The mint is sized from 99% of the position's FRESH holdings so ~1% of price drift between review and
-// execution still fits; a larger move leaves a close short against the empty credit and the whole
-// transaction reverts with the old position untouched. Burn floors stay the standard 95%. `pos` must come
-// from refreshLpPositionForRemoval (it carries the live sqrtP the amounts were derived at).
-export function prepareMoveLiquidity(chainId, pos, acct, pa, pb) {
+// Whether two sqrtPriceX96 values are prices within `bps` of each other.
+export function lpPricesAgree(a, b, bps) {
+  var priceA = a * a, priceB = b * b;
+  var gap = priceA > priceB ? priceA - priceB : priceB - priceA;
+  return gap * 10000n <= priceB * BigInt(bps == null ? 100 : bps);
+}
+
+// One unlock that burns a position in a pool the project's buyback has left and mints the same band in the
+// current pool: BURN_POSITION + MINT_POSITION + TAKE_PAIR (0x030211), funded only by the burn. The rule
+// juicebox.money follows (buyback-pool-migration.ts liquidityMovePlan), so both sites build the same call.
+// Burn floors are 99% of what the position holds at the old pool's reviewed price; the new liquidity is sized
+// from 98% of it at the current pool's price; the mint ceilings bind that price within the burn floors; and
+// TAKE_PAIR pays the remainder and the fees to the owner while reverting on any debt, so the wallet never pays in.
+// `pos` must come from refreshLpPositionForRemoval; toKey and toSqrtP are the current pool's key and live price.
+export function prepareMoveToCurrentPool(chainId, pos, toKey, toSqrtP, acct) {
   var posm = POSITION_MANAGER_BY_CHAIN[chainId];
   if (!posm) throw new Error('No position manager on this chain');
-  if (!(pa > 0) || !(pb > pa)) throw new Error('Set a valid positive price range (min below max).');
-  var key = pos.key, pairDec = pos.pair.decimals, pairIsC0 = pos.pairIsC0, sqrtP = pos.sqrtP;
-  if (!sqrtP || sqrtP <= 0n) throw new Error('Could not verify the current pool price');
-  var shave = function (v) { return v - v / 100n; };
-  var amount0 = pairIsC0 ? shave(pos.pairAmt) : shave(pos.tokAmt);
-  var amount1 = pairIsC0 ? shave(pos.tokAmt) : shave(pos.pairAmt);
-  var s = Number(key.tickSpacing);
-  var maxUsable = Math.trunc(887272 / s) * s, minUsable = Math.trunc(-887272 / s) * s;
-  var pRawFromQ = function (q) { return pairIsC0 ? (Math.pow(10, 18 - pairDec) / q) : (q * Math.pow(10, pairDec - 18)); };
-  var tA = Math.log(pRawFromQ(pa)) / Math.log(1.0001);
-  var tB = Math.log(pRawFromQ(pb)) / Math.log(1.0001);
-  var tickLower = Math.max(minUsable, lpAlignDown(Math.floor(Math.min(tA, tB)), s));
-  var tickUpper = Math.min(maxUsable, lpAlignUp(Math.ceil(Math.max(tA, tB)), s));
-  if (tickUpper <= tickLower) tickUpper = Math.min(maxUsable, tickLower + s);
-  // A currently single-sided position keeps the add path's nudge: the current price stays OUTSIDE the new
-  // range so the funded side is the only one the mint needs (same rule as prepareAddLiquidity).
-  var curTick = Math.floor(2 * Math.log(Number(sqrtP) / Math.pow(2, 96)) / Math.log(1.0001));
-  if (amount1 <= 0n && amount0 > 0n && curTick >= tickLower) tickLower = Math.min(maxUsable, lpAlignUp(curTick + 1, s));
-  if (amount0 <= 0n && amount1 > 0n && curTick < tickUpper) tickUpper = Math.max(minUsable, lpAlignDown(curTick, s));
-  if (tickUpper <= tickLower) tickUpper = Math.min(maxUsable, tickLower + s);
-  var liquidity = lpGetLiquidityForAmounts(sqrtP, lpSqrtAtTick(tickLower), lpSqrtAtTick(tickUpper), amount0, amount1);
-  if (liquidity <= 0n) throw new Error('The position is too small for this range');
-  var need = lpGetAmountsForLiquidity(sqrtP, lpSqrtAtTick(tickLower), lpSqrtAtTick(tickUpper), liquidity);
-  var amount0Max = need.amount0 + need.amount0 / 100n + 1n;
-  var amount1Max = need.amount1 + need.amount1 / 100n + 1n;
-  var pairMin = quotedOutputFloor(pos.pairAmt, 9500);
-  var tokenMin = quotedOutputFloor(pos.tokAmt, 9500);
+  var lc = function (a) { return String(a || '').toLowerCase(); };
+  var from = pos.key, spacing = Number(toKey.tickSpacing);
+  if (lc(from.currency0) !== lc(toKey.currency0) || lc(from.currency1) !== lc(toKey.currency1)
+    || Number(from.fee) !== Number(toKey.fee) || Number(from.tickSpacing) !== spacing || lc(from.hooks) === lc(toKey.hooks)) {
+    throw new Error('This position cannot be moved into the current pool.');
+  }
+  if (!(pos.liquidity > 0n)) throw new Error('This position holds no liquidity.');
+  if (!pos.sqrtP || pos.sqrtP <= 0n) throw new Error('Could not verify the old pool price');
+  if (!toSqrtP || toSqrtP <= 0n) throw new Error('The new pool is not open yet.');
+  if (!lpPricesAgree(toSqrtP, pos.sqrtP)) throw new Error('The new pool’s price is off; move later.');
+  if (pos.tickLower % spacing !== 0 || pos.tickUpper % spacing !== 0) throw new Error('This band does not fit the new pool’s tick spacing.');
+  var sa = lpSqrtAtTick(pos.tickLower), sb = lpSqrtAtTick(pos.tickUpper);
+  var removed = lpGetAmountsForLiquidity(pos.sqrtP, sa, sb, pos.liquidity);
+  var amount0Min = removed.amount0 - removed.amount0 / 100n;
+  var amount1Min = removed.amount1 - removed.amount1 / 100n;
+  var liquidity = lpGetLiquidityForAmounts(toSqrtP, sa, sb,
+    removed.amount0 - (removed.amount0 * 2n) / 100n, removed.amount1 - (removed.amount1 * 2n) / 100n);
+  if (liquidity <= 0n) throw new Error('This position is too small to move.');
+  var needed = lpGetAmountsForLiquidity(toSqrtP, sa, sb, liquidity);
+  var ceiling = function (amount, floor) { var padded = amount + amount / 100n + 1n; return padded < floor ? padded : floor; };
+  var amount0Max = ceiling(needed.amount0, amount0Min), amount1Max = ceiling(needed.amount1, amount1Min);
   var burnParams = encodeAbiParameters(
     [{ type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' }],
-    [BigInt(pos.tokenId), pairIsC0 ? pairMin : tokenMin, pairIsC0 ? tokenMin : pairMin, '0x']
-  );
+    [BigInt(pos.tokenId), amount0Min, amount1Min, '0x']);
   var mintParams = encodeAbiParameters(
     [
       { type: 'tuple', components: [{ type: 'address' }, { type: 'address' }, { type: 'uint24' }, { type: 'int24' }, { type: 'address' }] },
       { type: 'int24' }, { type: 'int24' }, { type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'address' }, { type: 'bytes' },
     ],
     [
-      [key.currency0, key.currency1, BigInt(key.fee), BigInt(key.tickSpacing), key.hooks],
-      BigInt(tickLower), BigInt(tickUpper), liquidity, amount0Max, amount1Max, acct, '0x',
-    ]
-  );
-  var closeC0 = encodeAbiParameters([{ type: 'address' }], [key.currency0]);
-  var closeC1 = encodeAbiParameters([{ type: 'address' }], [key.currency1]);
-  var unlockData = encodeAbiParameters(
-    [{ type: 'bytes' }, { type: 'bytes[]' }],
-    ['0x03021212', [burnParams, mintParams, closeC0, closeC1]] // BURN, MINT, CLOSE(c0), CLOSE(c1)
-  );
+      [toKey.currency0, toKey.currency1, Number(toKey.fee), spacing, toKey.hooks],
+      pos.tickLower, pos.tickUpper, liquidity, amount0Max, amount1Max, acct, '0x',
+    ]);
+  var takeParams = encodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'address' }], [toKey.currency0, toKey.currency1, acct]);
+  var unlockData = encodeAbiParameters([{ type: 'bytes' }, { type: 'bytes[]' }], ['0x030211', [burnParams, mintParams, takeParams]]);
   var deadline = BigInt(Math.floor(Date.now() / 1000) + (pos.smartWallet ? 30 * 24 * 3600 : 1200));
   return {
-    posm: posm, unlockData: unlockData, deadline: deadline, value: 0n,
-    pairMin: pairMin, tokenMin: tokenMin,
-    tickLower: tickLower, tickUpper: tickUpper, liquidity: liquidity,
-    pairMax: pairIsC0 ? amount0Max : amount1Max,
-    tokenMax: pairIsC0 ? amount1Max : amount0Max,
+    posm: posm, unlockData: unlockData, deadline: deadline, value: 0n, liquidity: liquidity,
+    pairMin: pos.pairIsC0 ? amount0Min : amount1Min, tokenMin: pos.pairIsC0 ? amount1Min : amount0Min,
+    amount0Min: amount0Min, amount1Min: amount1Min, amount0Max: amount0Max, amount1Max: amount1Max,
     smartWallet: !!pos.smartWallet,
   };
 }
 
-// The band editor for a one-transaction move. Opens immediately, refreshes the position for the prefill,
-// and re-refreshes on review so stale amounts never become the reviewed floors or mint sizing (the same
-// discipline as the remove flow).
-function openLpMoveEditor(project, chainId, stalePos, acct, onDone) {
+// Is the position, read again right before sending, the one that was reviewed?
+export function lpMoveStillFits(reviewed, now, acct) {
+  return !!now && String(now.owner || '').toLowerCase() === String(acct).toLowerCase()
+    && now.liquidity === reviewed.liquidity && now.info === reviewed.info;
+}
+
+// Review and send the move of an old-pool position into the current pool. Everything the call is built from is
+// read at the click: the position from the PositionManager, both pools' prices, and the current pool's key.
+function openLpPoolMove(project, chainId, stalePos, acct, onDone) {
   var sym = project.tokenSymbol || 'tokens';
-  var pos = null; // set once the refresh lands
-  var wrap = el('div', 'modal-body');
-  var intro = el('div', 'modal-balance');
-  intro.textContent = 'Refreshing position…';
-  wrap.appendChild(intro);
-  var lblR = el('div', 'modal-label');
-  lblR.textContent = 'New price range (' + stalePos.pair.symbol + ' per ' + sym + ')';
-  lblR.style.marginTop = '10px';
-  wrap.appendChild(lblR);
-  var rangeRow = el('div', 'ops-chainrow');
-  var minField = el('div', 'ops-field ops-field--grow');
-  var minInput = el('input', 'ops-amount'); minInput.type = 'number'; minInput.step = 'any'; minInput.min = '0'; minInput.placeholder = 'Min'; minInput.disabled = true; minField.appendChild(minInput);
-  rangeRow.appendChild(minField);
-  var toSpan = el('span', 'ops-between'); toSpan.textContent = 'to'; rangeRow.appendChild(toSpan);
-  var maxField = el('div', 'ops-field ops-field--grow');
-  var maxInput = el('input', 'ops-amount'); maxInput.type = 'number'; maxInput.step = 'any'; maxInput.min = '0'; maxInput.placeholder = 'Max'; maxInput.disabled = true; maxField.appendChild(maxInput);
-  rangeRow.appendChild(maxField);
-  wrap.appendChild(rangeRow);
-  var note = el('div', 'modal-balance');
-  note.textContent = 'One transaction: the burn funds the new band, no approvals, no extra capital. Unclaimed fees and anything the new band doesn’t use return to your wallet; at least 95% of the current holdings is enforced on the burn, and if any leg falls short the whole move reverts.';
-  wrap.appendChild(note);
-  var status = el('div', 'modal-status error'); status.style.display = 'none'; wrap.appendChild(status);
-  var go = el('button', 'detail-check-btn'); go.textContent = 'Review & move'; go.disabled = true; go.style.marginTop = '10px'; wrap.appendChild(go);
-  var handle = openModal('Move position #' + stalePos.tokenId.toString(), wrap);
-
-  function showError(e, fallback) {
-    var msg = errMessage(e, fallback);
-    status.textContent = msg.length > 160 ? msg.slice(0, 160) + '…' : msg;
-    status.style.display = '';
-  }
-
-  refreshLpPositionForRemoval(chainId, stalePos, acct).then(function (fresh) {
-    pos = fresh;
-    intro.textContent = 'Position #' + pos.tokenId.toString() + ' is burned and everything it holds, '
-      + formatTokens(pos.tokAmt) + ' ' + sym + ' + ' + formatBalance(pos.pairAmt, pos.pair.decimals, pos.pair.symbol)
-      + ', is re-minted into the new price band, all in one transaction.';
-    var band = lpBandPricesOf(pos);
-    minInput.value = String(Number(band.min.toPrecision(6)));
-    maxInput.value = String(Number(band.max.toPrecision(6)));
-    minInput.disabled = false; maxInput.disabled = false; go.disabled = false;
-  }).catch(function (e) {
-    intro.textContent = 'Could not refresh this position.';
-    showError(e, 'Could not refresh this position');
-  });
-
-  go.addEventListener('click', function () {
-    if (go.disabled || !pos) return;
-    status.style.display = 'none';
-    // A band the form can already refuse is refused inline, before any dialog.
-    try { prepareMoveLiquidity(chainId, pos, acct, Number(minInput.value), Number(maxInput.value)); }
-    catch (e) { showError(e, 'Could not prepare the move'); return; }
-    go.disabled = true; go.textContent = 'Refreshing…';
-    // The review opens at the click; the band, amounts and deadline come from the fresh position read.
-    var moveAction = 'Move your liquidity to a new band in the ' + sym + '/' + pos.pair.symbol + ' pool';
-    var review = openPendingReview({ action: moveAction, chain: chainNameOf(chainId), rows: [
-      ['Position', '#' + pos.tokenId.toString() + ' → a new position in the same pool'],
-      ['New band', null], ['Into the new band', null], ['You get back at least', null],
-      ['Leftovers', 'unclaimed fees + whatever the new band doesn’t use, to ' + acct],
-      ['Deadline', null],
-    ] }, { title: 'Confirm move liquidity', confirmText: 'Confirm & move' });
-    if (review.closed) { go.disabled = false; go.textContent = 'Review & move'; return; }
-    // Re-read immediately before building: the editor can sit open while the market moves.
-    refreshLpPositionForRemoval(chainId, pos, acct).then(function (fresh) {
-      pos = fresh;
-      go.disabled = false; go.textContent = 'Review & move';
-      var prep;
-      try {
-        prep = prepareMoveLiquidity(chainId, pos, acct, Number(minInput.value), Number(maxInput.value));
-      } catch (e) { showError(e, 'Could not prepare the move'); review.fail(status.textContent); return; }
-      if (review.closed) return;
-      // Show the post-tick-snap band, not the typed one — that is what mints.
-      var snapped = lpBandPricesOf({ pair: pos.pair, pairIsC0: pos.pairIsC0, tickLower: prep.tickLower, tickUpper: prep.tickUpper });
-      var mintMaxH = formatTokens(prep.tokenMax) + ' ' + sym + ' + ' + formatBalance(prep.pairMax, pos.pair.decimals, pos.pair.symbol);
-      var minH = formatTokens(prep.tokenMin) + ' ' + sym + ' + ' + formatBalance(prep.pairMin, pos.pair.decimals, pos.pair.symbol);
-      lpConfirmAndSend(review, {
-        summary: {
-          action: moveAction,
-          rows: [
-            ['Position', '#' + pos.tokenId.toString() + ' → a new position in the same pool'],
-            ['New band', formatPrice(snapped.min) + ' to ' + formatPrice(snapped.max) + ' ' + pos.pair.symbol + '/' + sym],
-            ['Into the new band', '≈ ' + mintMaxH + ', funded by the burn, not your wallet'],
-            ['You get back at least', minH + ', reverts below this'],
-            ['Leftovers', 'unclaimed fees + whatever the new band doesn’t use, to ' + acct],
-            ['Deadline', prep.smartWallet ? '30 days: survives a multisig signing queue' : '~20 minutes'],
-          ],
-        },
-        chain: chainNameOf(chainId), chainId: chainId, contract: 'Uniswap V4 PositionManager', address: prep.posm,
-        'function': 'modifyLiquidities', value: '0',
-        calldata: encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline] }),
-        position: { actions: 'BURN_POSITION, MINT_POSITION, CLOSE, CLOSE (0x03021212)', tokenId: pos.tokenId.toString(), minimumReturns: minH, recipient: acct },
-        args: { unlockData: prep.unlockData, deadline: 'set at signing (~' + (prep.smartWallet ? '30 days: survives a multisig signing queue' : '20 min') + ')' },
-      }, { title: 'Confirm move liquidity', confirmText: 'Confirm & move' }, 'Moving liquidity…', 'Move failed', function () {
-        return lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n, smartWallet: prep.smartWallet });
-      }, function (hash) {
-        handle.close();
-        noteLocalLpWrite(chainId, pos.poolId);
-        if (onDone) onDone(hash);
-      });
-    }).catch(function (e) {
-      go.disabled = false; go.textContent = 'Review & move';
-      showError(e, 'Could not refresh this position');
-      review.fail(status.textContent);
+  var action = 'Move your liquidity into the current ' + sym + '/' + stalePos.pair.symbol + ' pool';
+  var rows = function (pos, prep) {
+    var both = function (tok, pair) { return formatTokens(tok) + ' ' + sym + ' + ' + formatBalance(pair, stalePos.pair.decimals, stalePos.pair.symbol); };
+    return [
+      ['Position', '#' + stalePos.tokenId.toString() + ' (old pool) → a new position in the current pool, same band'],
+      ['Moves', pos ? both(pos.tokAmt, pos.pairAmt) : null],
+      ['At least', prep ? both(prep.tokenMin, prep.pairMin) + ' out of the old pool, enforced onchain; leftovers and fees come back to you' : null],
+      ['To', acct],
+      ['Deadline', prep ? (prep.smartWallet ? '30 days: survives a multisig signing queue' : '~20 minutes') : null],
+    ];
+  };
+  var opts = { title: 'Confirm move liquidity', confirmText: 'Confirm & move' };
+  var review = openPendingReview({ action: action, chain: chainNameOf(chainId), rows: rows(null, null) }, opts);
+  if (review.closed) return;
+  var client = clientFor(chainId), pm = POOL_MANAGER_BY_CHAIN[chainId];
+  // The pool the project's ruleset uses right now, read again at review and at send.
+  var currentPoolKey = function () {
+    return projectBuybackHook(project, chainId, { strict: true, fresh: true }).then(function (hook) {
+      if (!hook || hook === ZERO_ADDRESS) throw new Error('This project has no current pool to move into.');
+      return client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pidOn(project, chainId), stalePos.pair.addr] });
     });
-  });
+  };
+  Promise.all([
+    refreshLpPositionForRemoval(chainId, stalePos, acct),
+    currentPoolKey().then(function (toKey) {
+      var slot = keccak256(encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [uniswapV4PoolId(toKey), 6n]));
+      return client.readContract({ address: pm, abi: extsloadAbi, functionName: 'extsload', args: [slot] })
+        .then(function (slot0) { return { key: toKey, sqrtP: BigInt(slot0) & ((1n << 160n) - 1n) }; });
+    }),
+  ]).then(function (read) {
+    if (review.closed) return;
+    var pos = read[0], to = read[1];
+    var prep = prepareMoveToCurrentPool(chainId, pos, to.key, to.sqrtP, acct);
+    var minH = formatTokens(prep.tokenMin) + ' ' + sym + ' + ' + formatBalance(prep.pairMin, pos.pair.decimals, pos.pair.symbol);
+    lpConfirmAndSend(review, {
+      summary: { action: action, rows: rows(pos, prep) },
+      chain: chainNameOf(chainId), chainId: chainId, contract: 'Uniswap V4 PositionManager', address: prep.posm,
+      'function': 'modifyLiquidities', value: '0',
+      calldata: encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline] }),
+      position: { actions: 'BURN_POSITION, MINT_POSITION, TAKE_PAIR (0x030211)', tokenId: pos.tokenId.toString(), minimumReturns: minH, recipient: acct },
+      args: { unlockData: prep.unlockData, deadline: 'set at signing (~' + (prep.smartWallet ? '30 days: survives a multisig signing queue' : '20 min') + ')' },
+    }, opts, 'Moving liquidity…', 'Move failed', function () {
+      // The burn takes whatever the position holds when it runs, while the mint is sized from the review: a
+      // position that changed since must be reviewed again, as juicebox.money requires.
+      return Promise.all([lpReadPositionDetails(client, prep.posm, [BigInt(pos.tokenId)], pos.poolId), currentPoolKey()]).then(function (read) {
+        if (!lpMoveStillFits(pos, read[0][0], acct)) throw new Error('This position changed. Review it again before moving it.');
+        if (uniswapV4PoolId(read[1]) !== uniswapV4PoolId(to.key)) throw new Error('The project\u2019s current pool changed. Review the move again.');
+        return lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n, smartWallet: prep.smartWallet });
+      });
+    }, function (hash) {
+      noteLocalLpWrite(chainId, pos.poolId);
+      noteLocalLpWrite(chainId, uniswapV4PoolId(to.key));
+      if (onDone) onDone(hash);
+    });
+  }).catch(function (e) { review.fail(errMessage(e, 'Could not prepare the move.')); });
+}
+
+// The position editor (what it holds and the band it covers) loads on first use.
+function openLpEditor(project, chainId, pos, acct, onDone) {
+  import('./lp-edit.js').then(function (mod) { mod.openLpEditor(project, chainId, pos, acct, onDone); }, function () { throw chunkFailure(); });
 }
 
 // Modal: the connected wallet's LP positions on a chain (current + old pools), each with a Remove (burn) action.
@@ -31609,6 +31675,7 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
     var head = el('div', 'owners-row owners-head');
     ['Position', 'Chain', 'Holdings', 'Unclaimed fees', 'Lifetime fees', ''].forEach(function (h) { var c = el('span'); c.textContent = h; head.appendChild(c); });
     table.appendChild(head);
+    var actionCells = [];
     found.forEach(function (entry) {
       var pos = entry.pos, cid = entry.cid;
       var tr = el('div', 'owners-row');
@@ -31621,12 +31688,17 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
       var lifeC = el('span', 'owners-balance'); lifeC.textContent = pos.claimedPair == null ? '—' : 'reading…'; tr.appendChild(lifeC);
       var actC = el('span', 'lp-mine-actions');
       var claim = el('button', 'detail-check-btn'); claim.textContent = 'Claim fees'; claim.disabled = true; actC.appendChild(claim);
-      var mv = el('button', 'detail-check-btn'); mv.textContent = 'Move';
-      mv.addEventListener('click', function () { openLpMoveEditor(project, cid, pos, acct, onDone); });
+      // A position left in an old pool moves into the current one; one in the current pool is edited in place.
+      var mv = el('button', 'detail-check-btn'); mv.textContent = pos.hookIsCurrent ? 'Edit' : 'Move to new pool';
+      mv.addEventListener('click', function () {
+        if (pos.hookIsCurrent) openLpEditor(project, cid, pos, acct, onDone);
+        else openLpPoolMove(project, cid, pos, acct, onDone);
+      });
       actC.appendChild(mv);
       var manage = el('button', 'detail-check-btn'); manage.textContent = 'Remove';
       manage.addEventListener('click', function () { openRemoveLiquidityModal(project, cid, onDone); });
       actC.appendChild(manage);
+      actionCells.push({ cid: cid, pos: pos, cell: actC });
       tr.appendChild(actC);
       table.appendChild(tr);
       readLpPositionFees(cid, pos).then(function (fees) {
@@ -31657,6 +31729,22 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
     });
     wrap.appendChild(table);
     host.appendChild(wrap);
+    // Two positions in the current pool whose bands meet at the price are one market, edited together.
+    chainIds.forEach(function (cid) {
+      var current = actionCells.filter(function (entry) { return entry.cid === cid && entry.pos.hookIsCurrent; });
+      if (current.length < 2) return;
+      import('./lp-market.js').then(function (mod) {
+        var first = current[0].pos;
+        mod.lpGroupMarketPositions({ key: first.key, pair: first.pair, pairIsC0: first.pairIsC0 }, current.map(function (entry) { return entry.pos; })).forEach(function (group) {
+          if (group.kind !== 'market') return;
+          current.filter(function (entry) { return entry.pos === group.tokenSide || entry.pos === group.pairSide; }).forEach(function (entry) {
+            var edit = el('button', 'detail-check-btn'); edit.textContent = 'Edit market';
+            edit.addEventListener('click', function () { mod.openLpMarketEditor(project, cid, group, acct, onDone); });
+            entry.cell.insertBefore(edit, entry.cell.firstChild);
+          });
+        });
+      }).catch(function () {});
+    });
   }).catch(function () { loading.remove(); });
 }
 
@@ -31694,7 +31782,7 @@ function lpConfirmAndSend(review, payload, opts, sendingLine, failLine, send, on
   review.showNext(payload, opts).then(function (r) {
     if (!r || !r.ok) return;
     r.showStatus(sendingLine, 'pending');
-    send().then(function (hash) { r.close(); onSent(hash); }).catch(function (e) {
+    send(r).then(function (hash) { r.close(); onSent(hash); }).catch(function (e) {
       if (e && e.txStatusKind === 'pending') { r.showStatus(e.message, 'pending', { trackingError: true }); return; }
       var msg = errMessage(e, failLine); r.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
     });
@@ -31764,10 +31852,12 @@ function openRemoveLiquidityModal(project, chainId, onDone) {
         }).catch(function (e) { rmStatus.className = 'modal-status error'; rmStatus.style.display = ''; rmStatus.textContent = errMessage(e); });
       });
       row.appendChild(claim);
-      var mv = el('button', 'detail-check-btn'); mv.textContent = 'Move';
+      var mv = el('button', 'detail-check-btn'); mv.textContent = pos.hookIsCurrent ? 'Edit' : 'Move to new pool';
       mv.addEventListener('click', function () {
-        openLpMoveEditor(project, chainId, pos, acct, function (hash) {
-          var ok = el('div', 'modal-status success'); ok.appendChild(document.createTextNode('Moved | TX: ')); ok.appendChild(renderExplorerTxLink(chainId, hash, truncAddr(hash)));
+        (pos.hookIsCurrent ? openLpEditor : openLpPoolMove)(project, chainId, pos, acct, function (hash) {
+          var ok = el('div', 'modal-status success');
+          if (hash) { ok.appendChild(document.createTextNode('Done | TX: ')); ok.appendChild(renderExplorerTxLink(chainId, hash, truncAddr(hash))); }
+          else ok.textContent = 'Proposed to your Safe.';
           row.innerHTML = ''; row.appendChild(ok);
           if (onDone) onDone();
         });
@@ -32039,9 +32129,9 @@ export {
   classifySuckerInfra, clientFor, controllerAddressFor, currentSurplusOfAbi, draftRecipientFromSplit,
   erc20BalanceOfAbi, feeFreeSurplusOfAbi, fetchProjectTiers, findToRemoteValue, formatBalance, formatEth,
   formatTokens, isFeelessAddress, isKnown721HookClone, isZeroishAddress, lpDeadlineSecs, lpIsSmartWallet, lpPairFor,
-  lpTrimNum, moveChainName, noteLocalLpWrite, openTxConfirm, opsChainSelect, opsPercentButtons, ownerOfAbi,
+  lpApprovalRows, lpConfirmAndSend, lpCorridor, lpPositionManagerAbi, lpSafeBatchPreview, lpTrimNum, lpWithAllowanceFlags, moveChainName, noteLocalLpWrite, openTxConfirm, opsChainSelect, opsPercentButtons, ownerOfAbi,
   payoutLimitsAbi, prepareAddLiquidity, previewCashOutAbi, projectChains, read, readAmmPrice, readCashoutPrice,
-  readIssuancePairRate, readSuckerPairsOf, readUserBalance, readWalletTokenBalance, renderBalanceTables,
+  readIssuancePairRate, readSuckerPairsOf, readUserBalance, readWalletTokenBalance, refreshLpPositionForRemoval, renderBalanceTables,
   renderBridgeTransactions, renderBridgeTransactionsTable, renderExplorerTxLink, resolveAcctToken, resolveAcctTokens, resolveFundsKindAcct, resolveTierMedia,
   revnetOperatorOf, sameAddr, splitsOfAbi, suckerTokenMappingAbi, surplusAllowancesAbi, terminalOfAbi,
   terminalsOfAbi, toBigInt, tokenOfAbi, totalSupplyAbi,

@@ -28,7 +28,10 @@ import {
 } from './launch-component.js';
 import { pinFile, pinJson, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { getAuditPrompt } from './prompts.js';
-import { buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession, restoreUnsentRelayrPayment, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession } from './relayr.js';
+import { mountIssuancePriceChart } from './discover.js';
+import { CREATE_BATCH_ABI, MAX_SAFE_SIGNERS, MIN_SAFE_SIGNERS, bundleSafeLaunch, resolveSafePlan, safePolicyIssue, safeSignerAddress, verifySafe, verifySafeSimulation } from './safe-create.js';
+import { clearLaunchCalls, launchCallsFor, loadLaunchCalls, provesLaunch, saveLaunchCalls, unfinishedLaunchOutcome } from './launch-retry.js';
+import { relayrForwarderState, relayrSignedProofOf, decodeForwardedRequest, buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession, restoreUnsentRelayrPayment, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession } from './relayr.js';
 import { renderRelayrReceiptInto } from './relayr-ui.js';
 import { DEADLINE_OPTIONS, DEADLINE_SECONDS } from './deadline-options.js';
 import { checkJbDraft, jbDraftFileName, jbDraftUnsupported, serializeJbDraft } from './jb-draft-format.js';
@@ -370,6 +373,7 @@ function initState() {
       linksOpen: false, ownerOpen: false, tagsOpen: false, customOpen: false,
     },
     revOperator: PERMANENTLY_DISABLED_AUTHORITY, // no operator by default; checked controls can assign one
+    authoritySafe: authoritySafeIn(null), // a new Safe as the owner (or a revnet's operator), created in the launch
     revBaseCurrency: 1,              // revnet issuance-pricing currency: 1=ETH (native, 61166) | 2=USD
     accepts: ['eth'],                // accounting token(s) the project HOLDS / issues against: 'eth', 'usdc', or ['custom']
     customToken: { address: '', name: '', symbol: '', decimals: null, status: 'idle', error: '' }, // 'custom' accounting token (one ERC-20, same address on all chains; its own currency id, no price feed)
@@ -475,6 +479,27 @@ function normalizeImportedItem(value) {
 
 // Merge a loaded/imported draft over current defaults. Only known fields cross the boundary; arrays and chain
 // selections are bounded/normalized before they can reach a transaction builder.
+// The new-Safe choice as the form keeps it: at least two signer rows, three to start.
+export function authoritySafeIn(saved) {
+  var signers = saved && Array.isArray(saved.signers)
+    ? saved.signers.slice(0, MAX_SAFE_SIGNERS).map(function (signer) { return String(signer == null ? '' : signer).trim().slice(0, 64); })
+    : ['', '', ''];
+  while (signers.length < MIN_SAFE_SIGNERS) signers.push('');
+  var threshold = saved && Number.isInteger(saved.threshold) ? saved.threshold : 2;
+  return { on: !!(saved && saved.on), signers: signers, threshold: threshold };
+}
+
+// Does this launch create a Safe as the project's owner, or as a revnet's operator?
+export function createsSafe(state) {
+  var authority = state.projectType === 'revnet' ? state.revOperator : state.details.owner;
+  return !!(state.authoritySafe && state.authoritySafe.on) && String(authority || '').toLowerCase() !== PERMANENTLY_DISABLED_AUTHORITY;
+}
+
+// How every summary names the Safe before its address is known.
+export function newSafeSummary(state) {
+  return 'A new multisig, ' + state.authoritySafe.threshold + ' of ' + state.authoritySafe.signers.length + ' approvals';
+}
+
 function mergeDraft(obj) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
   var defaults = initState();
@@ -486,6 +511,7 @@ function mergeDraft(obj) {
   s.details.tags = Array.isArray(s.details.tags) ? s.details.tags.slice(0, 50).map(String) : [];
   s.collection = mergeKnownDraftFields(defaults.collection, obj.collection);
   s.customToken = mergeKnownDraftFields(defaults.customToken, obj.customToken);
+  s.authoritySafe = authoritySafeIn(obj.authoritySafe);
   if (s.customToken.status === 'loading') s.customToken.status = 'idle'; // never import a stuck in-flight lookup (re-verified on import)
   var allowedChains = CHAIN_PAIRS.map(function (pair) { return s.network === 'testnet' ? pair.testnet : pair.canon; });
   var seenChains = {};
@@ -548,7 +574,7 @@ function mergeDraft(obj) {
 // What the shared file's mapper needs from this form: its blank shapes, its chain pairs and its currency rule.
 function jbDraftDeps() {
   return {
-    state: initState, stage: createStage, item: itemDraft, pairs: CHAIN_PAIRS, canon: canonChainId,
+    state: initState, stage: createStage, item: itemDraft, pairs: CHAIN_PAIRS, canon: canonChainId, createsSafe: createsSafe, authoritySafeIn: authoritySafeIn,
     durationPresets: DURATION_PRESETS, collectionName: collectionNameOf, collectionSymbol: collectionSymbolOf,
     customCurrency: function (address) { return isAddr(address) ? Number(BigInt(address) % (1n << 32n)) : 0; },
   };
@@ -1042,7 +1068,10 @@ function ownerSection(state, render) {
       render();
     },
   ));
-  if (changesAllowed) {
+  if (changesAllowed) box.appendChild(authoritySafeChoice(state, render, 'owner'));
+  if (changesAllowed && createsSafe(state)) {
+    box.appendChild(authoritySafeEditor(state, render, 'owner'));
+  } else if (changesAllowed) {
     if (!perChainOpen(state, 'owner')) {
       var ownerInput = textInput(d.owner, '0x… or name.eth', function (v) { d.owner = v.trim(); });
       var ownerHint = attachEns(ownerInput, function (name, addr) { d.ownerResolvedFor = addr ? name : null; d.ownerResolved = addr || null; }, { chainId: (state.chainIds || [])[0] });
@@ -1078,7 +1107,10 @@ function operatorSection(state, render) {
       render();
     },
   ));
-  if (controlsEnabled) {
+  if (controlsEnabled) box.appendChild(authoritySafeChoice(state, render, 'operator'));
+  if (controlsEnabled && createsSafe(state)) {
+    box.appendChild(authoritySafeEditor(state, render, 'operator'));
+  } else if (controlsEnabled) {
     if (!perChainOpen(state, 'op')) {
       var opInput = textInput(state.revOperator, '0x… or name.eth', function (v) { state.revOperator = v.trim(); });
       var opHint = attachEns(opInput, function (name, addr) { state.revOperatorResolvedFor = addr ? name : null; state.revOperatorResolved = addr || null; }, { chainId: (state.chainIds || [])[0] });
@@ -1091,6 +1123,65 @@ function operatorSection(state, render) {
     box.appendChild(infoNote('No operator address will retain these limited controls.'));
   }
   wrap.appendChild(fieldBlock('Revnet operator', false, box));
+  return wrap;
+}
+
+// The line that switches between naming an owner and creating a multisig for it.
+function authoritySafeChoice(state, render, role) {
+  var on = createsSafe(state);
+  var line = el('div', 'create-hint');
+  line.appendChild(document.createTextNode(on ? 'Create a multisig so its signers approve decisions together. ' : 'Use your wallet or an existing multisig. '));
+  var link = el('button', 'create-pcaddr-toggle');
+  link.type = 'button';
+  link.textContent = on ? 'Already have an ' + role + ' in mind?' : 'Create a multisig';
+  link.addEventListener('click', function (e) { e.preventDefault(); state.authoritySafe.on = !on; render(); });
+  line.appendChild(link);
+  return line;
+}
+
+// Signers and approval count of the Safe this launch creates.
+function authoritySafeEditor(state, render, role) {
+  var safe = state.authoritySafe, label = role === 'owner' ? 'Owner' : 'Operator';
+  var wrap = el('div', '');
+  var addresses = safe.signers.map(safeSignerAddress);
+  safe.signers.forEach(function (signer, index) {
+    var row = el('div', 'create-split-row');
+    var input = textInput(signer, '0x…', function (value) { safe.signers[index] = value.trim().slice(0, 64); });
+    input.setAttribute('aria-label', label + ' signer ' + (index + 1));
+    // The row's error and the approval choices follow what was typed once the field is left.
+    input.addEventListener('change', render);
+    row.appendChild(input);
+    var rm = el('button', 'create-split-rm'); rm.type = 'button'; rm.textContent = '✕';
+    rm.title = 'Remove'; rm.setAttribute('aria-label', 'Remove ' + label.toLowerCase() + ' signer ' + (index + 1));
+    rm.disabled = safe.signers.length <= MIN_SAFE_SIGNERS;
+    rm.addEventListener('click', function (e) {
+      e.preventDefault();
+      safe.signers.splice(index, 1);
+      if (safe.threshold > safe.signers.length) safe.threshold = safe.signers.length;
+      render();
+    });
+    row.appendChild(rm);
+    wrap.appendChild(row);
+    var issue = !signer.trim() ? '' : !addresses[index] ? 'Enter a valid wallet address. Zero and reserved addresses cannot sign.'
+      : addresses.indexOf(addresses[index]) !== index || addresses.lastIndexOf(addresses[index]) !== index ? 'Each signer must have a different address.' : '';
+    if (issue) { var err = el('div', 'create-hint warn'); err.setAttribute('role', 'alert'); err.textContent = issue; wrap.appendChild(err); }
+  });
+  var add = el('button', 'operator-cta create-add-link'); add.type = 'button'; add.textContent = '+ Add signer';
+  add.disabled = safe.signers.length >= MAX_SAFE_SIGNERS;
+  add.addEventListener('click', function (e) { e.preventDefault(); safe.signers.push(''); render(); });
+  wrap.appendChild(add);
+  var policy = el('select', 'field create-input create-input-auto');
+  policy.setAttribute('aria-label', label + ' approval policy');
+  var valid = Number.isInteger(safe.threshold) && safe.threshold >= 1 && safe.threshold <= safe.signers.length;
+  if (!valid) { var none = el('option', ''); none.value = ''; none.textContent = 'Choose policy'; none.disabled = true; none.selected = true; policy.appendChild(none); }
+  safe.signers.forEach(function (_, index) {
+    var option = el('option', ''); option.value = String(index + 1); option.textContent = (index + 1) + ' of ' + safe.signers.length;
+    option.selected = valid && safe.threshold === index + 1;
+    policy.appendChild(option);
+  });
+  policy.addEventListener('change', function () { safe.threshold = Number(policy.value); render(); });
+  wrap.appendChild(fieldBlock('Approval policy', false, policy));
+  wrap.appendChild(infoNote('The multisig is created in the launch, at the same address on every chain.'));
   return wrap;
 }
 
@@ -1583,6 +1674,7 @@ export function renderStages(state, render, opts) {
     }
     wrap.appendChild(dField);
   }
+  if (!state.queueEditor) wrap.appendChild(issuancePreview(state, wrap));
   return wrap;
 }
 
@@ -1649,6 +1741,7 @@ function renderRevnetStages(state, render) {
     render();
   });
   wrap.appendChild(add);
+  wrap.appendChild(issuancePreview(state, wrap));
   return wrap;
 }
 
@@ -3350,7 +3443,7 @@ function renderDeploy(state, render) {
       state._relayrPending = null; state.deployProgress = null;
       state.statusLines.push({ text: 'Saved Relayr receipt cleared. Review every chain before launching missing work.', err: true });
       render();
-    }));
+    }, function () { if (state.deploying) return; state._finishRelayr = true; deploy(state, render); }));
     return wrap;
   }
 
@@ -3434,8 +3527,9 @@ function renderDeploy(state, render) {
   var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
   var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
   // An empty field means the connected wallet; only a typed value that is not an address blocks.
-  var needOwner = !isRev && ownerFieldInvalid(state.details.owner, ownerRaw);
-  var needOperator = isRev && ownerFieldInvalid(state.revOperator, opRaw);
+  var safeIssue = createsSafe(state) ? safePolicyIssue(state.authoritySafe.signers, state.authoritySafe.threshold) : '';
+  var needOwner = !isRev && (createsSafe(state) ? !!safeIssue : ownerFieldInvalid(state.details.owner, ownerRaw));
+  var needOperator = isRev && (createsSafe(state) ? !!safeIssue : ownerFieldInvalid(state.revOperator, opRaw));
   var needCustomToken = customAccounting(state) && !customReady(state); // custom accounting token not resolved yet
   var recipBad = recipientIssue(state); // a split/payout/auto-issuance with a value but no valid recipient
   var totalBad = splitTotalIssue(state); // a stage whose reserved/payout percentages sum over 100%
@@ -3837,7 +3931,8 @@ function reviewSummary(state) {
     var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
     c.appendChild(row(
       'Revnet operator',
-      String(opRaw || '').toLowerCase() === PERMANENTLY_DISABLED_AUTHORITY
+      createsSafe(state) ? newSafeSummary(state)
+        : String(opRaw || '').toLowerCase() === PERMANENTLY_DISABLED_AUTHORITY
         ? 'No retained authority'
         : (/^0x/.test(opRaw) ? shortAddr(opRaw) : (opRaw || 'Your connected wallet')),
     ));
@@ -4175,11 +4270,11 @@ async function executeCreateDirectSession(state, session, resumed, lock, keepSav
     if (resumed) {
       var reviewed = await (review ? review.confirm : confirmTransactionModal)({
         action: 'Resume saved project launch',
-        transactions: remaining.map(function (plan) { return {
+        transactions: remaining.map(function (plan) { return Object.assign({
           chainId: plan.chainId, chain: chainName(plan.chainId), address: plan.address,
           'function': plan.functionName || 'launchProjectFor', args: plan.args, value: plan.value.toString(),
           calldata: encodeFunctionData({ abi: plan.abi, functionName: plan.functionName || 'launchProjectFor', args: plan.args }),
-        }; }),
+        }, safeReviewFields(plan)); }),
       }, { title: 'Review remaining launch transactions', confirmText: 'Confirm & continue',
         note: 'These are the saved launch calls with the original shared start time. Confirmed chains are skipped. Each remaining chain requires its own transaction and gas.' });
       if (!reviewed || (typeof reviewed === 'object' && !reviewed.ok)) return false;
@@ -4187,7 +4282,8 @@ async function executeCreateDirectSession(state, session, resumed, lock, keepSav
     // Catch any configuration/fee failures across all remaining chains before submitting the next leg.
     for (var j = 0; j < remaining.length; j++) {
       var pending = remaining[j];
-      assertNewTierPolicy(pending.args);
+      // A launch that creates its Safe carries its tiers inside the batch: the launch call itself is checked.
+      assertNewTierPolicy(pending.launch ? pending.launch.args : pending.args);
       push('Simulating the saved launch on ' + chainName(pending.chainId) + '…');
       await simulateTransaction({ chainId: pending.chainId, address: pending.address, abi: pending.abi,
         functionName: pending.functionName || 'launchProjectFor', args: pending.args, value: pending.value, account: session.account });
@@ -4196,6 +4292,7 @@ async function executeCreateDirectSession(state, session, resumed, lock, keepSav
       var plan = remaining[k];
       if (!getAccount() || getAccount().toLowerCase() !== session.account.toLowerCase()) throw new Error('Connected account changed. Reconnect the launching wallet to continue.');
       assertScheduleFresh(plan.scheduleValidUntil);
+      await checkSafeCreation(plan, session.account);
       push('Confirm the launch on ' + chainName(plan.chainId) + ' in your wallet…');
       // Saves this leg's outcome; under a lost lock, hands it to the fresh-lock reconcile for this same attempt.
       var keep = function (hash) {
@@ -4245,6 +4342,12 @@ async function executeCreateDirectSession(state, session, resumed, lock, keepSav
       }
     }
   }
+  // Every launched leg's Safe is confirmed here, so a launch resumed after its transaction mined is checked too.
+  await Promise.all(session.plans.filter(function (plan) { return plan.safe && plan.hash; }).map(function (plan) {
+    return verifySafe(createPublicClientForChain(plan.chainId), plan.safe).catch(function () {
+      push('The multisig ' + plan.safe.address + ' could not be confirmed on ' + chainName(plan.chainId) + ' after the launch. Check it before sending it anything.', 'err');
+    });
+  }));
   await captureDeployedLegs(state, session.plans.map(function (plan) { return { chainId: plan.chainId, hash: plan.hash, rulesetCount: plan.rulesetCount }; }));
   state._deployedChains = session.plans.map(function (plan) { return plan.chainId; });
   await lock.assertHeld();
@@ -4294,7 +4397,7 @@ async function monitorCreateRelayr(state, session, resumed) {
   }
 }
 
-function createRelayrReceiptNode(session, checking, onCheck, onClear) {
+function createRelayrReceiptNode(session, checking, onCheck, onClear, onFinish) {
   var panel = el('div', 'relayr-pending-panel create-relayr-receipt');
   var progress = relayrProgress(session.records, session.expectedCount);
   var paymentExpired = session.paymentState === 'expired';
@@ -4332,11 +4435,19 @@ function createRelayrReceiptNode(session, checking, onCheck, onClear) {
     action.addEventListener('click', function () {
       if (!window.confirm('Clear this saved Relayr receipt? This does not undo chains that already deployed. Review every chain before launching any missing work.')) return;
       clearRelayrPendingSession(CREATE_RELAYR_SCOPE, session);
+      clearLaunchCallsOf(session);
       if (onClear) onClear();
     });
   } else {
     action.disabled = !!checking; action.textContent = checking ? 'Checking Relayr…' : session.paymentState === 'quoted' ? 'Choose funding chain' : 'Check Relayr status';
     action.addEventListener('click', onCheck);
+  }
+  // A paid bundle that left chains unfinished can sign the same launch again for those chains.
+  if (onFinish && canFinishRelayr(session, launchCallsOf(session), progress.failed)) {
+    var finish = el('button', 'create-btn primary'); finish.type = 'button'; finish.style.marginTop = '10px';
+    finish.textContent = checking ? 'Checking…' : 'Finish unfinished chains'; finish.disabled = !!checking;
+    finish.addEventListener('click', onFinish);
+    panel.appendChild(finish);
   }
   panel.appendChild(action);
   return panel;
@@ -4395,10 +4506,14 @@ function deploy(state, render) {
   // The project owner / revnet operator is an explicit, required launch argument (ENS-resolved).
   var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
   var operatorRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
-  if (state.projectType === 'revnet' ? ownerFieldInvalid(state.revOperator, operatorRaw) : ownerFieldInvalid(state.details.owner, ownerRaw)) {
+  if (createsSafe(state)) {
+    var safeIssue = safePolicyIssue(state.authoritySafe.signers, state.authoritySafe.threshold);
+    if (safeIssue) { state.statusLines.push({ text: 'Complete the ' + (state.projectType === 'revnet' ? 'operator' : 'owner') + ' multisig. ' + safeIssue, err: true }); render(); return; }
+  } else if (state.projectType === 'revnet' ? ownerFieldInvalid(state.revOperator, operatorRaw) : ownerFieldInvalid(state.details.owner, ownerRaw)) {
     state.statusLines.push({ text: state.projectType === 'revnet' ? 'Set a valid revnet operator before deploying.' : 'Set a valid project owner before launching.', err: true }); render(); return;
   }
-  var owner = isAddr(ownerRaw) ? ownerRaw : signer;
+  // A new Safe's address is known only once the launch's salt is: until then the signer stands in.
+  var owner = !createsSafe(state) && isAddr(ownerRaw) ? ownerRaw : signer;
   beginDeployRun(state, render, owner);
 }
 
@@ -4445,6 +4560,7 @@ async function runDeploy(state, owner) {
   var restoredRelayr = state._relayrPending || loadRelayrPendingSession(CREATE_RELAYR_SCOPE);
   if (restoredRelayr) state._relayrPending = restoredRelayr;
   if (restoredRelayr) {
+    if (state._finishRelayr) { state._finishRelayr = false; return finishCreateRelayr(state, restoredRelayr); }
     if (restoredRelayr.paymentState === 'quoted') {
       var restoredQuote = relayrResumeQuotedBundle(CREATE_RELAYR_SCOPE);
       if (!restoredQuote) throw new Error('The saved quote’s funding options are unavailable after this reload. Verify the existing bundle externally before starting another launch; no new requests will be signed.');
@@ -4454,8 +4570,10 @@ async function runDeploy(state, owner) {
     var restoredTxs = await monitorCreateRelayr(state, restoredRelayr, true);
     var restoredChain = Number(restoredRelayr.chains && restoredRelayr.chains[0] && restoredRelayr.chains[0].id) || state.chainIds[0];
     push('Reading the deployed project…');
-    await captureDeployedLegs(state, relayrLegs(restoredRelayr.chains && restoredRelayr.chains.length ? restoredRelayr.chains : [{ id: restoredChain }], restoredTxs, restoredRelayr.rulesetCountByChain));
-    state._deployedChains = restoredRelayr.chains.map(function (chain) { return Number(chain.id); });
+    var restoredBefore = launchedBefore(restoredRelayr);
+    await captureDeployedLegs(state, restoredBefore.concat(relayrLegs(restoredRelayr.chains && restoredRelayr.chains.length ? restoredRelayr.chains : [{ id: restoredChain }], restoredTxs, restoredRelayr.rulesetCountByChain)));
+    state._deployedChains = restoredBefore.map(function (leg) { return leg.chainId; }).concat(restoredRelayr.chains.map(function (chain) { return Number(chain.id); }));
+    clearLaunchCallsOf(restoredRelayr);
     clearRelayrPendingSession(CREATE_RELAYR_SCOPE, restoredRelayr);
     state._relayrPending = null;
     return;
@@ -4472,7 +4590,7 @@ async function runDeploy(state, owner) {
   var chainNames = state.chainIds.map(function (cid) { return chainName(cid); }).join(', ');
   var knownRows = [
     ['Name', state.details.name || 'project'],
-    [isRev ? 'Operator' : 'Owner', isRev ? (operatorRaw || owner) : owner],
+    [isRev ? 'Operator' : 'Owner', createsSafe(state) ? newSafeSummary(state) : isRev ? (operatorRaw || owner) : owner],
     ['Chains', chainNames],
     isRev ? ['Token', state.details.ticker || 'TOKEN'] : null,
     ['Accepts', (state.accepts || []).map(function (t) { return t === 'eth' ? 'ETH' : t === 'usdc' ? 'USDC' : 'custom token'; }).join(', ') || 'ETH'],
@@ -4548,6 +4666,15 @@ async function runDeploy(state, owner) {
     // BEFORE the user signs or pays anything.
     await resolveItemSplitProjects(state);
     var feeByChain = await fees;
+    var safePlan = null;
+    if (createsSafe(state)) {
+      push('Working out the multisig’s address…');
+      safePlan = await resolveSafePlan({ owners: state.authoritySafe.signers, threshold: state.authoritySafe.threshold, salt: salt, role: isRev ? 'operator' : 'owner' },
+        state.chainIds.map(function (chainId) { return createPublicClientForChain(chainId); }));
+      owner = safePlan.address;
+      knownRows[1] = [isRev ? 'Operator' : 'Owner', safePlan.address + ' (a new multisig, ' + safePlan.threshold + ' of ' + safePlan.owners.length + ' approvals)'];
+      knownRows.splice(2, 0, ['Multisig signers', safePlan.owners.join(', ')]);
+    }
     plans = [];
     for (var i = 0; i < state.chainIds.length; i++) {
       var cid = state.chainIds[i];
@@ -4558,7 +4685,7 @@ async function runDeploy(state, owner) {
       if (plan.missingSuckers) push('Note: some chain pairs have no sucker deployer on ' + chainName(cid) + '; those links will be skipped.', 'err');
       plan.chainId = cid;
       plan.value = feeByChain[i];
-      plans.push(plan);
+      plans.push(safePlan ? withSafeCreation(plan, safePlan) : plan);
     }
   } catch (e) {
     review.fail(friendlyDeployError(e));
@@ -4574,7 +4701,7 @@ async function runDeploy(state, owner) {
     action: (state.projectType === 'revnet' ? 'Deploy revnet' : 'Launch project') + ' on ' + plans.map(function (p) { return chainName(p.chainId); }).join(', '),
     transactions: plans.map(function (p) {
       var fn = p.functionName || 'launchProjectFor';
-      return {
+      return Object.assign({
         chain: chainName(p.chainId),
         chainId: p.chainId,
         address: p.address,
@@ -4582,7 +4709,7 @@ async function runDeploy(state, owner) {
         value: p.value.toString() + ' wei (' + formatEther(p.value) + ' ETH creation fee)',
         args: p.args,
         calldata: encodeFunctionData({ abi: p.abi, functionName: fn, args: p.args }),
-      };
+      }, safeReviewFields(p));
     }),
   };
   reviewPayload.summary = {
@@ -4621,6 +4748,7 @@ async function runDeploy(state, owner) {
       try {
         await simulateTransaction({ chainId: p0.chainId, address: p0.address, abi: p0.abi, functionName: p0.functionName || 'launchProjectFor', args: p0.args, value: p0.value, account: signer });
         push('Simulation passed on ' + chainName(p0.chainId), 'ok');
+        await checkSafeCreation(p0, signer);
       } catch (e) {
         throw new Error('Could not simulate on ' + chainName(p0.chainId) + ': ' + friendlyDeployError(e));
       }
@@ -4646,27 +4774,143 @@ async function runDeploy(state, owner) {
   // Multichain → Relayr (two-step, like revnet-app). We DON'T eth_call-simulate locally — Relayr simulates
   // each chain server-side and only returns a quote if every leg would succeed. Sign one request per chain,
   // post the bundle for a quote, let the user CHOOSE which chain to pay gas on, then pay once.
+  for (var safeIndex = 0; safeIndex < plans.length; safeIndex++) await checkSafeCreation(plans[safeIndex], signer);
   push('Sign one request per chain, gas is paid once at the end.');
   var txs = [];
   var gases = await Promise.all(plans.map(function (plan) { return estimateLaunchGas(plan, signer); }));
+  // The exact calls are kept in this browser so a chain the bundle does not finish can be signed again unchanged.
+  var launchCalls = plans.map(function (plan, index) {
+    return { chainId: plan.chainId, to: plan.address, value: plan.value, gas: gases[index], scheduleValidUntil: plan.scheduleValidUntil,
+      rulesetCount: plan.rulesetCount || state.stages.length,
+      data: encodeFunctionData({ abi: plan.abi, functionName: plan.functionName || 'launchProjectFor', args: plan.args }) };
+  });
   for (var k = 0; k < plans.length; k++) {
     var pk = plans[k];
     push('Signing for ' + chainName(pk.chainId) + '…');
-    var gas = gases[k];
-    var data = encodeFunctionData({ abi: pk.abi, functionName: pk.functionName || 'launchProjectFor', args: pk.args });
     assertScheduleFresh(pk.scheduleValidUntil);
-    txs.push(await buildForwardedTx(pk.chainId, signer, pk.address, data, gas, pk.value, pk.scheduleValidUntil));
+    txs.push(await buildForwardedTx(pk.chainId, signer, pk.address, launchCalls[k].data, gases[k], pk.value, pk.scheduleValidUntil));
   }
+  // Saved as the requests leave this window, bound to the requests themselves, once this launch's marker holds
+  // the action: a launch another window holds keeps its own record.
+  var proofs = txs.map(relayrSignedProofOf);
+  var keepLaunchCalls = function () {
+    if (proofs.every(Boolean)) saveLaunchCalls(signer, { calls: launchCalls.map(function (call, index) { return Object.assign({}, call, { proofs: [proofs[index]] }); }), done: [] });
+  };
   push('Sending to Relayr to simulate + quote…');
   var quote;
   try {
-    quote = await relayrPostBundle(txs, { scope: CREATE_RELAYR_SCOPE, account: signer, scheduleValidUntil: launchScheduleLimit(plans), rulesetCountByChain: Object.fromEntries(plans.map(function (p) { return [p.chainId, p.rulesetCount || state.stages.length]; })), chains: plans.map(function (plan) { return { id: plan.chainId, name: chainName(plan.chainId) }; }) });
+    quote = await relayrPostBundle(txs, { scope: CREATE_RELAYR_SCOPE, account: signer, onPublication: keepLaunchCalls, scheduleValidUntil: launchScheduleLimit(plans), rulesetCountByChain: Object.fromEntries(plans.map(function (p) { return [p.chainId, p.rulesetCount || state.stages.length]; })), chains: plans.map(function (plan) { return { id: plan.chainId, name: chainName(plan.chainId) }; }) });
   } catch (error) {
     state._relayrPending = loadRelayrPendingSession(CREATE_RELAYR_SCOPE);
     throw error;
   }
   state._relayrPending = loadRelayrPendingSession(CREATE_RELAYR_SCOPE);
   return fundCreateRelayrQuote(state, signer, quote, plans.map(function (plan) { return { id: plan.chainId, name: chainName(plan.chainId) }; }));
+}
+
+// The saved record this bundle's requests belong to, with the call and signed proof behind each request, or null.
+function launchCallsOf(session) {
+  var record = session && loadLaunchCalls(session.account);
+  var bound = launchCallsFor(record, session && session.expectedTransactions);
+  return bound ? { record: record, bound: bound } : null;
+}
+// Deletes the saved calls only with their own bundle's receipt. The record matches a bundle and its replacement
+// alike, so a window still showing the old bundle must not delete what the saved replacement needs.
+function clearLaunchCallsOf(session) {
+  var current = loadRelayrPendingSession(CREATE_RELAYR_SCOPE, session);
+  if ((!current || current.bundleUuid === session.bundleUuid) && launchCallsOf(session)) clearLaunchCalls(session.account);
+}
+// A bundle whose unfinished chains can be signed again: paid with chains left over, or the unpaid replacement of one.
+function canFinishRelayr(session, saved, failed) {
+  if (!saved) return false;
+  if (session.paymentHash) return !session.paymentState && !!failed;
+  return saved.record.replacing && (session.paymentState === 'quoted' || session.paymentState === 'expired');
+}
+
+// Chains an earlier bundle of this launch already finished, so the success panel and the reads cover them too.
+function launchedBefore(session) {
+  var saved = launchCallsOf(session);
+  var now = ((session && session.chains) || []).map(function (chain) { return Number(chain.id); });
+  return saved ? saved.record.done.filter(function (leg) { return now.indexOf(leg.chainId) === -1; }) : [];
+}
+
+// A paid bundle that finished on some chains only: prove what launched, then sign the SAME call again for each
+// unfinished chain at the SAME forwarder nonce and fund one new bundle for them. Stops without signing when a
+// chain's old request may have run or can still arrive.
+async function finishCreateRelayr(state, session) {
+  var push = state._push, signer = session.account;
+  var same = function (a, b) { return String(a || '').toLowerCase() === String(b || '').toLowerCase(); };
+  if (!getAccount() || !same(getAccount(), signer)) throw new Error('Connect ' + signer + ' to finish this launch.');
+  var saved = launchCallsOf(session);
+  if (!saved) throw new Error('The launch calls of this bundle are not saved in this browser. Nothing was signed.');
+  if (!canFinishRelayr(session, saved, true)) throw new Error('This bundle’s payment is not settled. Check its status first. Nothing was signed.');
+  var unpaid = !session.paymentHash;
+  push('Checking every chain of the bundle…');
+  var done = launchedBefore(session), retry = [];
+  for (var i = 0; i < session.chains.length; i++) {
+    var chainId = Number(session.chains[i].id), name = chainName(chainId);
+    var call = saved.bound[i].call, signed = saved.bound[i].proof;
+    var expected = (session.expectedTransactions || [])[i];
+    if (!expected || Number(expected.chain) !== chainId || call.chainId !== chainId) throw new Error('The saved launch call for ' + name + ' does not match this bundle. Nothing was signed.');
+    // By the quote's own transaction ID: a status list can leave entries out, so positions prove nothing.
+    var hash = relayrDestinationHash((session.records || []).find(function (record) {
+      return record && String(record.tx_uuid || '').toLowerCase() === String(expected.txUuid || '').toLowerCase();
+    }));
+    var forwarder = getAddress('ERC2771Forwarder', chainId), client = createPublicClientForChain(chainId);
+    var transaction = null, receipt = null;
+    if (hash) {
+      // An unreadable chain proves nothing either way, so it stops the run rather than count as failed.
+      transaction = await client.getTransaction({ hash: hash });
+      receipt = await client.getTransactionReceipt({ hash: hash });
+    }
+    var request = transaction ? decodeForwardedRequest(transaction.input || transaction.data) : null;
+    if (provesLaunch({ forwarder: forwarder, account: signer, call: call, transaction: transaction, receipt: receipt, request: request })) {
+      done.push({ chainId: chainId, hash: hash, rulesetCount: call.rulesetCount });
+      continue;
+    }
+    var onChain = await relayrForwarderState(chainId, signer);
+    var reverted = !!(receipt && receipt.status === 'reverted' && transaction && same(transaction.to, forwarder)
+      && request && same(request.from, signer) && same(request.to, call.to) && same(request.data, call.data));
+    var outcome = unfinishedLaunchOutcome({ signedNonce: signed.nonce, deadline: signed.deadline, chainNonce: onChain.chainNonce, timestamp: onChain.timestamp, reverted: reverted, unpaid: unpaid });
+    if (outcome === 'ran') throw new Error('The launch on ' + name + ' may have run. Check that chain before doing anything else. Nothing was signed.');
+    if (outcome === 'wait') throw new Error('The launch on ' + name + ' can still arrive. Check its status again later. Nothing was signed.');
+    retry.push({ call: call, nonce: signed.nonce });
+  }
+  if (!retry.length) {
+    push('Every chain launched. Reading the projects…');
+    await captureDeployedLegs(state, done);
+    state._deployedChains = done.map(function (leg) { return leg.chainId; });
+    clearRelayrPendingSession(CREATE_RELAYR_SCOPE, session); state._relayrPending = null;
+    clearLaunchCallsOf(session);
+    return;
+  }
+  var names = retry.map(function (item) { return chainName(item.call.chainId); }).join(', ');
+  if (!window.confirm('Sign the same launch again for ' + names + '? Chains that launched are kept. The relay fee is paid again for ' + (retry.length === 1 ? 'this chain' : 'these chains') + '.')) return false;
+  var txs = [];
+  for (var k = 0; k < retry.length; k++) {
+    var item = retry[k].call;
+    assertScheduleFresh(item.scheduleValidUntil);
+    push('Signing again for ' + chainName(item.chainId) + '…');
+    txs.push(await buildForwardedTx(item.chainId, signer, item.to, item.data, item.gas == null ? undefined : BigInt(item.gas), BigInt(item.value),
+      item.scheduleValidUntil, undefined, retry[k].nonce));
+  }
+  var chains = retry.map(function (entry) { return { id: entry.call.chainId, name: chainName(entry.call.chainId) }; });
+  // Saved before the requests leave this window: each replacement joins its call's proofs, so the record matches
+  // the old bundle and the new one alike, whichever ends up saved.
+  var again = txs.map(relayrSignedProofOf), latest = launchCallsOf(session);
+  if (!again.every(Boolean) || !latest || !saveLaunchCalls(signer, { replacing: true, done: done, calls: latest.record.calls.map(function (call) {
+    var at = retry.findIndex(function (entry) { return entry.call.chainId === call.chainId; });
+    return at === -1 ? call : Object.assign({}, call, { proofs: call.proofs.concat([again[at]]) });
+  }) })) throw new Error('Could not save the launch progress. Restore browser storage. Nothing was published.');
+  push('Sending to Relayr to simulate + quote…');
+  var quote;
+  try {
+    quote = await relayrPostBundle(txs, { scope: CREATE_RELAYR_SCOPE, account: signer, chains: chains,
+      scheduleValidUntil: launchScheduleLimit(retry.map(function (entry) { return entry.call; })),
+      rulesetCountByChain: Object.fromEntries(retry.map(function (entry) { return [entry.call.chainId, entry.call.rulesetCount]; }).filter(function (pair) { return pair[1]; })),
+      replaces: { bundleUuid: session.bundleUuid } });
+  } finally { state._relayrPending = loadRelayrPendingSession(CREATE_RELAYR_SCOPE); }
+  return fundCreateRelayrQuote(state, signer, quote, chains);
 }
 
 async function fundCreateRelayrQuote(state, signer, quote, chains) {
@@ -4720,8 +4964,10 @@ async function fundCreateRelayrQuote(state, signer, quote, chains) {
   state.deployChains = chains.map(function (chain) { return Number(chain.id); });
   var finalRelayrTxs = await monitorCreateRelayr(state, paidSession, false);
   push('Reading the new project…');
-  await captureDeployedLegs(state, relayrLegs(chains, finalRelayrTxs, paidSession.rulesetCountByChain));
-  state._deployedChains = state.deployChains.slice();
+  var before = launchedBefore(paidSession);
+  await captureDeployedLegs(state, before.concat(relayrLegs(chains, finalRelayrTxs, paidSession.rulesetCountByChain)));
+  state._deployedChains = before.map(function (leg) { return leg.chainId; }).concat(state.deployChains);
+  clearLaunchCallsOf(paidSession);
   clearRelayrPendingSession(CREATE_RELAYR_SCOPE, paidSession);
   state._relayrPending = null;
 }
@@ -4729,6 +4975,39 @@ async function fundCreateRelayrQuote(state, signer, quote, chains) {
 // Gas for the inner launch call (the forwarder forwards this much). Estimate the direct call + buffer;
 // fall back generously if estimation throws. Includes the creation fee as value so the estimate runs
 // (a 0-value estimate would hit the InvalidCreationFee revert).
+// The launch as one batch that first creates its Safe. Everything downstream sends, saves and verifies the batch
+// like any other launch call; `launch` keeps the call inside it for the review.
+export function withSafeCreation(plan, safe) {
+  var functionName = plan.functionName || 'launchProjectFor';
+  var batch = bundleSafeLaunch({ to: plan.address, value: plan.value, data: encodeFunctionData({ abi: plan.abi, functionName: functionName, args: plan.args }) }, safe);
+  return Object.assign({}, plan, { address: batch.to, abi: CREATE_BATCH_ABI, functionName: 'aggregate3Value', args: batch.args, safe: safe,
+    launch: { address: plan.address, 'function': functionName, args: plan.args } });
+}
+
+// What a review adds for a launch that creates its Safe: the Safe, its signers, and the launch call inside the
+// batch, decoded. The saved plan carries all three, so a resumed launch states them too.
+export function safeReviewFields(plan) {
+  if (!plan.safe) return {};
+  return { creates: 'Safe ' + plan.safe.address + ', ' + plan.safe.threshold + ' of ' + plan.safe.owners.length + ' approvals',
+    signers: plan.safe.owners.slice(), launch: plan.launch };
+}
+
+// Before anything is signed or sent: run the batch and require that the launch ran and the Safe was created at
+// its reviewed address, or is already there as reviewed. The fee is lent to the call, since a relayed launch's
+// signer need not hold it on this chain.
+async function checkSafeCreation(plan, account) {
+  if (!plan.safe) return;
+  var pub = createPublicClientForChain(plan.chainId), out;
+  try {
+    out = await pub.call({ account: account, to: plan.address, value: plan.value,
+      data: encodeFunctionData({ abi: plan.abi, functionName: plan.functionName, args: plan.args }),
+      stateOverride: [{ address: account, balance: BigInt(plan.value) + 10n ** 18n }] });
+  } catch (e) {
+    throw new Error('Could not simulate the multisig creation and launch on ' + chainName(plan.chainId) + ': ' + friendlyDeployError(e));
+  }
+  await verifySafeSimulation(pub, plan.safe, out && out.data);
+}
+
 function launchScheduleLimit(plans) {
   var limits = plans.map(function (plan) { return plan.scheduleValidUntil; }).filter(function (limit) { return limit != null; });
   return limits.length ? Math.min.apply(Math, limits) : null;
@@ -4833,7 +5112,7 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var multi = state.chainIds.length > 1;
   // Per-chain owner override (the "same on all chains" control may set a different address per chain). The
   // CREATE2 `salt` stays derived from the default owner (passed in) so omnichain addresses still match.
-  var chainOwner = chainAddr(state, chainId, 'owner', owner);
+  var chainOwner = createsSafe(state) ? null : chainAddr(state, chainId, 'owner', owner);
   if (isAddr(chainOwner)) owner = chainOwner;
   // Multichain "start immediately" → pin every chain's first ruleset to the one shared deploy-time start
   // (~10 min ahead). Staged single-chain launches use the same pin so every follower has a stable parent.
@@ -4886,7 +5165,8 @@ function buildRevnetArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
   // Per-chain operator override ("same on all chains" control); salt stays on the default for matching addresses.
   var opChain = chainAddr(state, chainId, 'op', opRaw);
-  var operator = isAddr(opChain) ? opChain : (isAddr(opRaw) ? opRaw : owner);
+  // A new Safe (passed as owner) is the operator on every chain.
+  var operator = createsSafe(state) ? owner : isAddr(opChain) ? opChain : (isAddr(opRaw) ? opRaw : owner);
 
   var stages = [];
   var prevStart = deployStart;
@@ -5820,3 +6100,68 @@ export const __test = {
   // Hand-written ABI fragments, exposed so the ABI-parity suite can diff them against data/abis/*.json.
   revDeployAbi, revDeploy721Abi, deployer721Abi, omnichainAbi, omnichain721Abi,
 };
+
+// The issuance schedule the draft would launch, in the shape the project page's price ladder reads: each
+// stage's start, issuance rate (18 decimals), cut per cycle (out of 1e9) and cycle length. A launch starts about
+// ten minutes after it is sent (an hour for several rulesets behind a notice). Empty when nothing issues tokens
+// or the schedule cannot be resolved yet.
+export function issuancePreviewStages(state, now) {
+  var launch = now + launchStartLead(state, state.chainIds[0]), out = [];
+  // What a stage that inherits starts from. JBRulesets cuts once per elapsed cycle, and once when the stage
+  // before it has a cut and no cycle length.
+  var rateAt = function (t) {
+    var active = out[out.length - 1], cycles = active.duration > 0 ? Math.max(0, Math.floor((t - active.start) / active.duration)) : 1;
+    return active.weight * Math.pow((1e9 - active.cut) / 1e9, cycles);
+  };
+  var cutOf = function (stage) { return Math.round(Math.max(0, Math.min(100, Number(stage.weightCutPercent) || 0)) / 100 * 1e9); };
+  try {
+    if (state.projectType === 'revnet') {
+      var prevStart = launch;
+      state.stages.forEach(function (stage, i) {
+        var start = i === 0 ? ((stage.scheduleOn && stage.schedule) ? Number(stage.schedule) : launch)
+          : prevStart + Math.round(revStageDaysAfter(state, i) * 86400);
+        prevStart = start;
+        // A later stage left blank keeps the previous stage's issuance as it stands at the boundary.
+        var weight = (i === 0 || stage.weight) ? Number(tokenAmount18(stage.weight, UINT112_MAX)) : rateAt(start);
+        var frequency = stage.issuanceCutOn ? Math.max(0, Math.round((Number(stage.cutFreqDays) || 0) * 86400)) : 0;
+        var cut = stage.issuanceCutOn ? cutOf(stage) : 0;
+        out.push({ start: start, weight: weight, weightCutPercent: frequency ? cut : 0, duration: frequency, cut: cut });
+      });
+    } else {
+      if (durationIssue(state)) return [];
+      var effective = resolveStages(state);
+      var first = effective[0].schedule ? Number(effective[0].schedule) : launch;
+      var starts = stageStarts(state, effective, first, now, state.chainIds[0]).starts;
+      // One curve has one unit: rules that issue per ETH and per USD have no single price line.
+      var units = effective.filter(function (stage) { return stage.tokenMode === 'custom'; }).map(function (stage) { return Number(stage.baseCurrency) || 1; });
+      if (units.some(function (unit) { return unit !== units[0]; })) return [];
+      effective.forEach(function (stage, i) {
+        var custom = stage.tokenMode === 'custom';
+        out.push({ start: Number(starts[i]), weight: custom ? Number(tokenAmount18(stage.weight || '0', UINT112_MAX)) : 0,
+          weightCutPercent: custom ? cutOf(stage) : 0, duration: Number(stage.durationSeconds) || 0 });
+      });
+    }
+  } catch (_) { return []; }
+  if (!out.some(function (stage) { return stage.weight > 0; }) || !out.every(function (stage) { return isFinite(stage.start) && stage.start > 0; })) return [];
+  return out.map(function (stage) { return { start: stage.start, weight: stage.weight, weightCutPercent: stage.weightCutPercent, duration: stage.duration }; });
+}
+
+// The preview under the rules: the token's issuance price over time, redrawn as the rules are edited.
+function issuancePreview(state, host) {
+  var box = el('div', 'create-field');
+  var draw = function () {
+    var now = Math.floor(Date.now() / 1000), stages = issuancePreviewStages(state, now);
+    box.innerHTML = '';
+    if (!stages.length) return;
+    var ticker = String((state.details && state.details.ticker) || '').trim();
+    var note = el('div', 'create-hint'); note.textContent = 'Preview ' + (ticker || 'token') + ' issuance price over time with the above rules:';
+    box.appendChild(note);
+    var chart = el('div', 'issuance-chart'); box.appendChild(chart);
+    // Drawn from the first start: nothing is issued before it.
+    mountIssuancePriceChart(chart, stages, Math.max(now, stages[0].start), 1, ticker || 'tokens');
+  };
+  draw();
+  host.addEventListener('input', draw);
+  host.addEventListener('change', draw);
+  return box;
+}

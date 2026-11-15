@@ -13,7 +13,7 @@ import { assertShopCallPolicy } from './shop-policy.js';
 //
 // No API key. Host confirmed from juice-sdk-v4: https://api.relayr.ba5ed.com
 
-import { encodeFunctionData, isAddress, keccak256, stringToHex } from 'viem';
+import { decodeFunctionData, encodeFunctionData, isAddress, keccak256, stringToHex } from 'viem';
 import { getWalletClient, invokeWallet, isSafeConnected, getAccount, createPublicClientForChain, getAddress, switchChain, getViewAs, VIEW_AS_TX_ERROR, waitForTrackedTransactionReceipt, confirmTransactionModal } from './component-base.js';
 import { CHAINS, chainNameFor } from './chain.js';
 import { gasWithHeadroom } from './gas.js';
@@ -237,7 +237,8 @@ export async function relayrSupportsForwarding(chainId, target) {
 // `value` is the ETH forwarded to the target (e.g. a project-creation fee); the relayer sends it with
 // `execute`, so it appears as the bundle tx's `value` and Relayr's quote covers it.
 // `locks` are the caller's run locks (a plan's lock): the signature prompt opens only while they are held.
-export async function buildForwardedTx(chainId, from, to, data, gasHint, value, executionDeadline, locks) {
+// expectedNonce: sign only at this forwarder nonce (a replacement for an earlier request at the same nonce).
+export async function buildForwardedTx(chainId, from, to, data, gasHint, value, executionDeadline, locks, expectedNonce) {
   assertShopCallPolicy(data, to);
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   if (!relayrSupportsChain(chainId)) throw new Error('Relayr does not support this destination chain. Use a direct wallet transaction.');
@@ -275,6 +276,7 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value, 
       || !Array.isArray(domTuple[6]) || domTuple[6].length) throw new Error('The forwarder domain does not match this chain and deployment.');
   var domainName = domTuple[1], domainVersion = domTuple[2];
   var nonce = await pub.readContract({ address: forwarder, abi: FORWARDER_ABI, functionName: 'nonces', args: [from] });
+  if (expectedNonce != null && BigInt(nonce) !== BigInt(expectedNonce)) throw new Error('The earlier request on ' + chainNameFor(chainId) + ' may have run. Nothing was signed; check that chain first.');
 
   var deadline = Math.floor(Date.now() / 1000) + 47 * 3600; // uint48 seconds (< 48h Relayr max)
   if (executionDeadline != null) {
@@ -337,6 +339,25 @@ function forwardedPublicationProofs(transactions, journal) {
   }).filter(Boolean);
 }
 
+// The signer's forwarder nonce and the chain time, read at one block.
+export async function relayrForwarderState(chainId, account) {
+  var forwarder = getAddress('ERC2771Forwarder', chainId), client = createPublicClientForChain(chainId);
+  var block = await client.getBlock({ blockTag: 'latest' });
+  if (!forwarder || !block || block.number == null || block.timestamp == null) throw new Error('Could not read ' + chainNameFor(chainId) + '. Nothing was signed.');
+  var nonce = BigInt(await client.readContract({ address: forwarder, abi: FORWARDER_ABI, functionName: 'nonces', args: [account], blockNumber: block.number }));
+  return { chainNonce: nonce, timestamp: BigInt(block.timestamp) };
+}
+// The nonce and deadline this window signed into a forwarded entry, with the hash Relayr binds it by.
+export function relayrSignedProofOf(entry) {
+  var requestHash = relayrRequestFingerprint(Object.assign({}, entry, { virtual_nonce: 0 }));
+  var proof = RELAYR_SIGNED_FORWARD_REQUESTS.get(requestHash);
+  return proof ? { requestHash: requestHash, nonce: proof.nonce, deadline: proof.deadline } : null;
+}
+export function decodeForwardedRequest(data) {
+  try { var decoded = decodeFunctionData({ abi: FORWARDER_ABI, data: data }); return decoded.functionName === 'execute' ? decoded.args[0] : null; }
+  catch (_) { return null; }
+}
+
 function nonceReservationKey(value) { return [value.chain, value.forwarder, value.signer, value.nonce].join(':'); }
 function readNonceReservations() {
   try {
@@ -373,9 +394,11 @@ async function writeNonceReservations(rows, locks) {
 // chain + signed nonce across ALL action scopes. Clearing an action's UI receipt does not retire this guard.
 // Only a chain-proven expired signature or consumed nonce makes its published request unable to execute.
 // Returns the reservations this call added, so a definite pre-POST abort can remove exactly those.
-async function reserveForwardedPublication(proofs, locks) {
+// replacing: a new request may take the place of this same action's request at the SAME signer, chain and nonce.
+// Both requests share the nonce, so at most one of them can ever execute.
+async function reserveForwardedPublication(proofs, locks, replacing) {
   if (!proofs.length) return [];
-  var rows = readNonceReservations(), seen = new Set();
+  var rows = readNonceReservations(), seen = new Set(), displaced = [];
   for (var proof of proofs) {
     var key = nonceReservationKey(proof);
     if (seen.has(key)) throw new Error('This Relayr bundle repeats a signed forwarder nonce. Use separate confirmed rounds for same-chain calls.');
@@ -396,6 +419,11 @@ async function reserveForwardedPublication(proofs, locks) {
       return row.chain !== proof.chain || row.forwarder !== proof.forwarder || row.signer !== proof.signer
         || !(state.nonce > BigInt(row.nonce) || state.timestamp > BigInt(row.deadline));
     });
+    rows = rows.filter(function (row) {
+      var gone = replacing && nonceReservationKey(row) === key && row.scope === proof.scope;
+      if (gone) displaced.push(row);
+      return !gone;
+    });
     var conflict = rows.find(function (row) { return nonceReservationKey(row) === key; });
     if (conflict) {
       var error = new Error('Another saved Relayr request already reserves this signer’s nonce on ' + chainNameFor(proof.chain) + '. Resume its original action (' + conflict.scope + '); do not publish or fund a competing bundle.');
@@ -405,6 +433,8 @@ async function reserveForwardedPublication(proofs, locks) {
     rows.push(proof);
   }
   await writeNonceReservations(rows, locks);
+  // What this call displaced, so a definite abort before the POST can put it back.
+  proofs.displaced = displaced;
   return proofs;
 }
 // Removes the reservations of an attempt that definitely never reached the POST, under the publication lock.
@@ -413,7 +443,7 @@ async function releaseForwardedReservations(proofs, lock) {
   var keys = new Set(proofs.map(nonceReservationKey));
   await writeNonceReservations(readNonceReservations().filter(function (row) {
     return !keys.has(nonceReservationKey(row)) || !proofs.some(function (proof) { return proof.requestHash === row.requestHash && proof.scope === row.scope; });
-  }), [lock]);
+  }).concat(proofs.displaced || []), [lock]);
 }
 
 // POST the bundle and return { bundle_uuid, payment_info:[{chain,amount,calldata,target,token,payment_deadline}], ... }.
@@ -450,7 +480,21 @@ export async function relayrPostBundle(transactions, journal, lock, keep) {
     if (journal.account && (!getAccount() || String(getAccount()).toLowerCase() !== String(journal.account).toLowerCase())) {
       throw new Error('Connected account changed. Review the Relayr request again.');
     }
-    if (loadRelayrPendingSession(journal.scope)) {
+    // journal.replaces = { bundleUuid }: a paid bundle that finished on some chains only, or its own unpaid
+    // replacement, is replaced by same-nonce requests for the unfinished chains. A paid receipt is archived before
+    // the new marker is saved. A bundle whose publication or payment outcome is unknown is never replaced.
+    var replaced = loadRelayrPendingSession(journal.scope);
+    var replaceable = replaced && journal.replaces && replaced.bundleUuid === journal.replaces.bundleUuid
+      && (replaced.paymentHash ? !replaced.paymentState : (replaced.paymentState === 'quoted' || replaced.paymentState === 'expired'));
+    if (replaceable && !replaced.paymentHash) {
+      // Nothing was paid for it: no receipt to keep.
+    } else if (replaceable) {
+      var archiveKey = 'jb-relayr-retired-v1:' + relayrAccountPart(replaced) + journal.scope + ':' + replaced.bundleUuid;
+      var archiveRaw = JSON.stringify({ receipt: replaced, replacedBy: 'same-nonce requests for its unfinished chains' });
+      try { localStorage.setItem(archiveKey, archiveRaw); if (localStorage.getItem(archiveKey) !== archiveRaw) throw new Error(); }
+      catch (_) { throw new Error('The original receipt could not be archived. Restore browser storage before signing again.'); }
+    } else if (replaced) {
+      replaced = null;
       var existing = new Error('A previous Relayr request for this action is still saved. Check that request before publishing another bundle.');
       existing.code = 'RELAYR_PUBLICATION_PENDING'; existing.retryable = true; throw existing;
     }
@@ -458,23 +502,46 @@ export async function relayrPostBundle(transactions, journal, lock, keep) {
     // last await before the POST, the publication record. A definite abort before the POST removes this attempt's
     // reservations; once the POST may have happened they stay.
     var fence = [lock].concat(journal.locks || []);
-    var reserved = await reserveForwardedPublication(forwarded, fence);
+    var reserved = await reserveForwardedPublication(forwarded, fence, !!(replaced && journal.replaces));
     try { await assertLocksHeld(fence); } catch (error) {
       await releaseForwardedReservations(reserved, lock).catch(function () {});
       throw error;
     }
-    publication = saveRelayrPendingSession(journal.scope, {
-      bundleUuid: 'publication-pending:' + crypto.randomUUID(), account: journal.account || getAccount(),
-      paymentState: 'publication', expectedCount: ordered.length,
-      scheduleValidUntil: journal.scheduleValidUntil, rulesetCountByChain: journal.rulesetCountByChain, rulesetParentByChain: journal.rulesetParentByChain,
-      chains: journal.chains || ordered.map(function (request) { return { id: Number(request.chain), name: chainNameFor(request.chain) }; }),
-      publicationRequestHashes: ordered.map(relayrRequestFingerprint), records: [],
-    });
+    // The archived receipt gives way to the new marker only now, with the reservations written and the locks held.
+    var replacing = !!(replaced && journal.replaces);
+    var savePublication = function () {
+      publication = saveRelayrPendingSession(journal.scope, {
+        bundleUuid: 'publication-pending:' + crypto.randomUUID(), account: journal.account || getAccount(),
+        paymentState: 'publication', expectedCount: ordered.length,
+        scheduleValidUntil: journal.scheduleValidUntil, rulesetCountByChain: journal.rulesetCountByChain, rulesetParentByChain: journal.rulesetParentByChain,
+        chains: journal.chains || ordered.map(function (request) { return { id: Number(request.chain), name: chainNameFor(request.chain) }; }),
+        publicationRequestHashes: ordered.map(relayrRequestFingerprint), records: [],
+      });
+    };
+    if (replacing) {
+      // Under the payment lock, and only if the bundle is still exactly as it was read: a window that started
+      // paying it in the meantime keeps it.
+      await browserLocks().request('jb-relayr-payment:' + String(replaced.account).toLowerCase(), async function () {
+        var current = loadRelayrPendingSession(journal.scope);
+        if (!current || current.bundleUuid !== replaced.bundleUuid || (current.paymentHash || null) !== (replaced.paymentHash || null)
+            || (current.paymentState || null) !== (replaced.paymentState || null)) {
+          await releaseForwardedReservations(reserved, lock).catch(function () {});
+          var moved = new Error('This saved bundle changed in another window. Check its status first. Nothing was published.');
+          moved.code = 'RELAYR_PUBLICATION_PENDING'; moved.retryable = true;
+          throw moved;
+        }
+        clearRelayrPendingSession(journal.scope, replaced);
+        savePublication();
+      });
+    } else savePublication();
     if (!publication || publication.persisted === false) {
       if (publication) clearRelayrPendingSession(journal.scope, publication);
+      if (replacing) saveRelayrPendingSession(journal.scope, replaced);
       await releaseForwardedReservations(reserved, lock).catch(function () {});
       throw new Error('The request could not be saved before publication. Enable browser storage before requesting a Relayr quote. Nothing was published or paid.');
     }
+    // The caller's own record of what it just published, written once this bundle's marker holds the action.
+    if (journal.onPublication) { try { journal.onPublication(); } catch (_) {} }
   }
   var res;
   try {
@@ -483,6 +550,15 @@ export async function relayrPostBundle(transactions, journal, lock, keep) {
       body: JSON.stringify({ transactions: ordered, virtual_nonce_mode: 'ChainIndependent' }),
     }, RELAYR_QUOTE_TIMEOUT_MS);
   } catch (error) {
+    if (publication && replaced && journal.replaces) {
+      // No quote came back, so nothing can be paid for these requests. The replaced bundle returns; a later
+      // attempt signs at the same nonce again.
+      clearRelayrPendingSession(journal.scope, publication);
+      saveRelayrPendingSession(journal.scope, replaced);
+      var lost = new Error('Relayr did not confirm a quote. Nothing was paid; the earlier bundle is back, so this can be tried again.');
+      lost.code = 'RELAYR_QUOTE_TIMEOUT'; lost.retryable = true; lost.cause = error;
+      throw lost;
+    }
     if (publication) {
       var unknown = new Error('Relayr may have received the signed requests, but no quote was confirmed. The saved request blocks new signatures and payments for this action. Keep it and verify the destination activity before retrying.');
       unknown.code = 'RELAYR_PUBLICATION_PENDING'; unknown.retryable = true; unknown.cause = error; unknown.relayrSession = publication;
@@ -497,6 +573,11 @@ export async function relayrPostBundle(transactions, journal, lock, keep) {
   }
   if (!res.ok) {
     var detail = ''; try { detail = await res.text(); } catch (_) {}
+    // Relayr answered and refused: the replaced paid receipt comes back, so the same chains can be tried again.
+    if (publication && replaced && journal.replaces) {
+      clearRelayrPendingSession(journal.scope, publication);
+      saveRelayrPendingSession(journal.scope, replaced);
+    }
     throw new Error('Relayr HTTP ' + res.status + (detail ? ': ' + detail.slice(0, 240) : ''));
   }
   var body = await res.json();

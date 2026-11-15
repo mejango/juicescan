@@ -51,10 +51,15 @@ beforeEach(() => {
     }),
     estimateGas: vi.fn(async () => 200000n), request: vi.fn(async () => '0x'),
   };
-  let previous = Promise.resolve();
+  // One queue per lock name, as Web Locks behave: a different name taken inside a held lock does not wait on it.
+  const queues = new Map();
   locks = vi.fn((name, options, callback) => {
-    const next = previous.then(async () => { state.inLock = true; try { return await callback(state.lock || { name }); } finally { state.inLock = false; } });
-    previous = next.catch(() => {});
+    const publication = name === 'jb-relayr-forwarder-publication-v1';
+    const next = (queues.get(name) || Promise.resolve()).then(async () => {
+      if (publication) state.inLock = true;
+      try { return await callback(state.lock || { name }); } finally { if (publication) state.inLock = false; }
+    });
+    queues.set(name, next.catch(() => {}));
     return next;
   });
   vi.stubGlobal('navigator', { locks: { request: locks } });
@@ -327,5 +332,103 @@ describe('expired unpaid schedule retirement', () => {
       expect(loadRelayrPendingSession('staged-create').bundleUuid).toBe(session.bundleUuid);
       expect(reservations()).toHaveLength(1);
     } finally { storage.mockRestore(); }
+  });
+});
+
+describe('the caller’s own publication record', () => {
+  it('is written under the publication lock once the marker holds the action, and never for a refused second bundle', async () => {
+    const seen = [];
+    const onPublication = () => seen.push([state.inLock, loadRelayrPendingSession('create').paymentState]);
+    await relayrPostBundle([await entry()], { ...journal('create'), onPublication });
+    expect(seen).toEqual([[true, 'publication']]);
+    await expect(relayrPostBundle([await entry(8453, '0xdeadbeef')], { ...journal('create'), onPublication })).rejects.toMatchObject({ code: 'RELAYR_PUBLICATION_PENDING' });
+    expect(seen).toHaveLength(1);
+  });
+});
+
+describe('replacing a paid bundle’s unfinished request at the same nonce', () => {
+  const PAY = '0x' + 'ab'.repeat(32);
+  const secondQuote = () => {
+    const next = quote(), id = 'fedcba98-7654-3210-fedc-ba9876543210';
+    next.payment_info[0].calldata = next.payment_info[0].calldata.replace(next.bundle_uuid.replace(/-/g, ''), id.replace(/-/g, ''));
+    next.bundle_uuid = id;
+    return next;
+  };
+  async function paidBundle() {
+    await relayrPostBundle([await entry()], journal('create'));
+    const paid = saveRelayrPendingSession('create', { ...loadRelayrPendingSession('create'), paymentHash: PAY, paymentState: null });
+    expect(paid.paymentHash).toBe(PAY);
+    return paid;
+  }
+  const again = () => buildForwardedTx(8453, state.account, TARGET, '0x12345678', 500000n, undefined, undefined, undefined, 7n);
+
+  it('publishes the replacement, keeps one reservation at that nonce and archives the paid receipt', async () => {
+    const paid = await paidBundle();
+    state.timestamp = BigInt(NOW + 60); vi.spyOn(Date, 'now').mockReturnValue((NOW + 60) * 1000);
+    fetchQuote.mockImplementation(async () => ({ ok: true, json: async () => secondQuote() }));
+    const result = await relayrPostBundle([await again()], { ...journal('create'), replaces: { bundleUuid: paid.bundleUuid } });
+    expect(reservations()).toEqual([expect.objectContaining({ nonce: '7', scope: 'create', deadline: String(NOW + 60 + 47 * 3600) })]);
+    expect(loadRelayrPendingSession('create')).toMatchObject({ bundleUuid: result.bundle_uuid, paymentState: 'quoted', paymentHash: null });
+    const archived = Object.keys(localStorage).find(key => key.startsWith('jb-relayr-retired-v1:') && key.endsWith(paid.bundleUuid));
+    expect(JSON.parse(localStorage.getItem(archived)).receipt.paymentHash).toBe(PAY);
+  });
+
+  it('still refuses a second bundle that does not name the paid one, or names another', async () => {
+    await paidBundle();
+    await expect(relayrPostBundle([await again()], journal('create'))).rejects.toMatchObject({ code: 'RELAYR_PUBLICATION_PENDING' });
+    await expect(relayrPostBundle([await again()], { ...journal('create'), replaces: { bundleUuid: 'other' } }))
+      .rejects.toMatchObject({ code: 'RELAYR_PUBLICATION_PENDING' });
+    expect(fetchQuote).toHaveBeenCalledTimes(1);
+  });
+
+  it('replaces its own unpaid quote, and never a bundle whose payment outcome is unknown', async () => {
+    await relayrPostBundle([await entry()], journal('create'));
+    const quoted = loadRelayrPendingSession('create');
+    expect(quoted.paymentState).toBe('quoted');
+    fetchQuote.mockImplementation(async () => ({ ok: true, json: async () => secondQuote() }));
+    const result = await relayrPostBundle([await again()], { ...journal('create'), replaces: { bundleUuid: quoted.bundleUuid } });
+    expect(loadRelayrPendingSession('create').bundleUuid).toBe(result.bundle_uuid);
+    expect(reservations()).toHaveLength(1);
+    saveRelayrPendingSession('create', { ...loadRelayrPendingSession('create'), paymentState: 'sending', paymentAttempt: 'a' });
+    await expect(relayrPostBundle([await again()], { ...journal('create'), replaces: { bundleUuid: result.bundle_uuid } }))
+      .rejects.toMatchObject({ code: 'RELAYR_PUBLICATION_PENDING' });
+  });
+
+  it('puts the earlier reservation back when the bundle changes hands before anything is published', async () => {
+    const paid = await paidBundle();
+    const before = reservations();
+    state.timestamp = BigInt(NOW + 60); vi.spyOn(Date, 'now').mockReturnValue((NOW + 60) * 1000);
+    const tx = await again();
+    // Another window clears the receipt while this one reads the chain for its reservation.
+    state.client.getBlock.mockImplementationOnce(async () => { clearRelayrPendingSession('create', paid); return { number: 99n, timestamp: state.timestamp }; });
+    await expect(relayrPostBundle([tx], { ...journal('create'), replaces: { bundleUuid: paid.bundleUuid } }))
+      .rejects.toMatchObject({ code: 'RELAYR_PUBLICATION_PENDING' });
+    expect(fetchQuote).toHaveBeenCalledTimes(1);
+    expect(reservations()).toEqual(before);
+  });
+
+  it('never replaces another action’s reservation at that nonce', async () => {
+    await relayrPostBundle([await entry(8453, '0xdeadbeef')], journal('claims'));
+    saveRelayrPendingSession('create', { bundleUuid: '99999999-89ab-cdef-0123-456789abcdef', account: ACCOUNT, paymentHash: PAY, expectedCount: 1,
+      chains: [{ id: 8453, name: 'Base' }] });
+    await expect(relayrPostBundle([await again()], { ...journal('create'), replaces: { bundleUuid: '99999999-89ab-cdef-0123-456789abcdef' } }))
+      .rejects.toMatchObject({ code: 'RELAYR_NONCE_RESERVED', scope: 'claims' });
+    expect(loadRelayrPendingSession('create').paymentHash).toBe(PAY);
+  });
+
+  it('signs nothing once the nonce moved, and gives the paid receipt back when Relayr refuses the replacement', async () => {
+    const paid = await paidBundle();
+    state.nonce = 8n;
+    await expect(again()).rejects.toThrow('may have run');
+    expect(state.wallet.signTypedData).toHaveBeenCalledTimes(1);
+    state.nonce = 7n;
+    fetchQuote.mockImplementation(async () => ({ ok: false, status: 422, text: async () => 'SimulationReverted' }));
+    await expect(relayrPostBundle([await again()], { ...journal('create'), replaces: { bundleUuid: paid.bundleUuid } })).rejects.toThrow('Relayr HTTP 422');
+    expect(loadRelayrPendingSession('create')).toMatchObject({ bundleUuid: paid.bundleUuid, paymentHash: PAY });
+    expect(reservations()).toHaveLength(1);
+    // No answer at all: nothing can be paid for the replacement, so the paid receipt comes back too.
+    fetchQuote.mockImplementation(async () => { throw new Error('offline'); });
+    await expect(relayrPostBundle([await again()], { ...journal('create'), replaces: { bundleUuid: paid.bundleUuid } })).rejects.toThrow('did not confirm a quote');
+    expect(loadRelayrPendingSession('create')).toMatchObject({ bundleUuid: paid.bundleUuid, paymentHash: PAY });
   });
 });
