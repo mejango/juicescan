@@ -106,7 +106,7 @@ describe('the words of a reviewed market edit', () => {
       ['From your wallet', 'about 3 ETH'],
       ['Back to your wallet', 'about 5 TKN + unclaimed fees'],
       ['Authorizes up to', '4 ETH (1% price headroom)'],
-      ['Enforced onchain', 'At least 19 TKN back (95% floors)'],
+      ['Enforced onchain', 'Removed liquidity pays at least 19 TKN (95% floors)'],
     ]);
   });
   it('a pure top-up returns only fees and states no floors', () => {
@@ -115,7 +115,7 @@ describe('the words of a reviewed market edit', () => {
       tokenFlow: 10n, pairFlow: 0n, tokenFunding: 11n, pairFunding: 0n, tokenMinimum: 0n, pairMinimum: 0n,
     }, fmt, '1 to 2 ETH/TKN');
     expect(rows).toEqual([
-      ['Floor to ceiling', '1 to 2 ETH/TKN (kept)'],
+      ['Bands', 'Kept as they are'],
       ['Selling side', 'tops up #11, holds about 20 TKN'],
       ['Buying side', 'keeps #12, holds about 2 ETH'],
       ['From your wallet', 'about 10 TKN'],

@@ -210,14 +210,15 @@ export function describeMarketEdit(plan, fmt, corridorText) {
   var side = function (edit, format) {
     return SIDE_VERB[edit.kind] + (edit.tokenId !== null ? ' #' + edit.tokenId.toString() : '') + ', holds about ' + format(edit.holding);
   };
-  var rows = [['Floor to ceiling', corridorText + (plan.refit ? ' (re-fit)' : ' (kept)')]];
+  // Without a re-fit the bands stay where they were minted, which the current floor and ceiling may not describe.
+  var rows = [plan.refit ? ['Floor to ceiling', corridorText + ' (re-fit)'] : ['Bands', 'Kept as they are']];
   if (plan.token) rows.push(['Selling side', side(plan.token, fmt.token)]);
   if (plan.pair) rows.push(['Buying side', side(plan.pair, fmt.pair)]);
   if (plan.tokenFlow > 0n || plan.pairFlow > 0n) rows.push(['From your wallet', 'about ' + both(positive(plan.tokenFlow), positive(plan.pairFlow))]);
   rows.push(['Back to your wallet', plan.tokenFlow < 0n || plan.pairFlow < 0n
     ? 'about ' + both(positive(-plan.tokenFlow), positive(-plan.pairFlow)) + ' + unclaimed fees' : 'Unclaimed fees']);
   if (plan.tokenFunding > 0n || plan.pairFunding > 0n) rows.push(['Authorizes up to', both(plan.tokenFunding, plan.pairFunding) + ' (1% price headroom)']);
-  if (plan.tokenMinimum > 0n || plan.pairMinimum > 0n) rows.push(['Enforced onchain', 'At least ' + both(plan.tokenMinimum, plan.pairMinimum) + ' back (95% floors)']);
+  if (plan.tokenMinimum > 0n || plan.pairMinimum > 0n) rows.push(['Enforced onchain', 'Removed liquidity pays at least ' + both(plan.tokenMinimum, plan.pairMinimum) + ' (95% floors)']);
   return rows;
 }
 
