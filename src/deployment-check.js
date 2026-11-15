@@ -3,10 +3,18 @@
 // juicebox.money's "Check deployment": same check ids, statuses and sentences, so the two reports compare.
 // Reads are pinned to one block. Custom hooks and controllers are "unsupported" where a capability cannot be
 // verified, never a mismatch merely for differing from the canonical deployment.
-import { isAddress, zeroAddress, zeroHash } from 'viem';
+import { isAddress } from 'viem';
 import { contractReverted } from './encoding.js';
 import { getABI, getAddress } from './abi-registry.js';
-import { sameAddress, v6Address } from './nft-inventory-read.js';
+
+var zeroAddress = '0x0000000000000000000000000000000000000000', zeroHash = '0x' + '0'.repeat(64);
+// Kept here, not imported from the NFT inventory reader: sharing that lazy module would split it into the startup set.
+function sameAddress(left, right) { return left.toLowerCase() === right.toLowerCase(); }
+function v6Address(contract, chainId) {
+  var found = getAddress(contract, chainId);
+  if (!found) throw new Error('No v6 ' + contract + ' deployment on chain ' + chainId);
+  return found;
+}
 
 export var DEPLOYMENT_STATUS_LABEL = { passed: 'Verified', mismatch: 'Mismatch', unsupported: 'Custom / unsupported', unavailable: 'Unavailable', info: 'Information' };
 export var DEPLOYMENT_CATEGORIES = [['project', 'Project contracts'], ['hook', 'Hook wiring'], ['pricing', 'Shop pricing'], ['permissions', 'Permissions']];
