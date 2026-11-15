@@ -172,6 +172,7 @@ Not verified against live wallets or a live Safe. The page handoff, handle URL t
   - Left out on purpose: claiming both sides' fees in one call. Each position keeps its own Claim fees.
 - [x] J10h Raised by chain on hover, and the issuance price preview in Create.
 - [x] J10j Claim both sides of a market in one call (jango, 2026-11-15: "i want it"). Small and obvious: `prepareCollectLpFees` takes `pos.claimIds` and encodes one zero-liquidity decrease per position plus one TAKE_PAIR, the bytes juicebox.money's `buildCollectMarketFeesUnlockData` builds; the same review and sender as a single claim; "Claim market fees" on the selling side's row. Test in `test/open-first-bridge.test.js`.
+- [x] J10k A re-band's reviewed cap is enforced onchain (jango, 2026-11-15: "yeah built it, sounds right"). A move (`lpEditPlan`) and a market re-fit (`lpMarketEdit`) end in `SETTLE` of each reviewed cap from the caller plus `TAKE_PAIR` (`lpCappedClose`) in place of `CLOSE_CURRENCY` x2: the PositionManager's `_getFullCredit` reverts when a currency is still owed, so the wallet cannot pay more than "Authorizes up to". Same bytes as juicebox.money (fixtures regenerated from its builders) and revnet.money. Fork evidence: Base projects 3 and 6, re-bands funded in ETH, USDC and project token execute with the unused part of the cap returned, market re-fits execute, and the same plans with caps cut to a tenth revert with `DeltaNotPositive` (0x4c085bf1).
 - [ ] J10i Asked of jango: Sticky split recipient (Juicescan has no pinned source for Sticky's addresses), the deployment check dialog, paying by card.
 - [x] J10d Other items are split into J10h (built) and J10i (asked).
 
@@ -197,7 +198,7 @@ jango, 2026-11-15: "1. add to juicescan. 2. lets add to juicescan."
 - [x] J11a Sticky recipient, shown. A split whose hook is the chain's StickyDistributor reads "Sticky holders stuck 4 to 52 weeks → SYMBOL" in the split lists, shop item routing, the activity feed, the edit review and the decoded call (`src/sticky.js`).
 - [x] J11b Sticky recipient, edited. The split editor's Hook type offers Sticky (token, all holders or holders stuck N weeks, optional maximum). Before anything is signed, each chain is checked the way the distributor checks it (`PROJECT_ID()` then `StickyHook.tokenOf`), and reserved tokens need the project's ERC-20 there.
 - [x] J11c Sticky recipient, launched and queued. Create and the queue form offer Sticky for payouts and reserved tokens (never shop items). A new custom project's reserved tokens are refused with juicebox.money's sentence, since it has no ERC-20 at launch. `.jb` files carry it as `to: "sticky"`, both ways.
-- [ ] J11d Deployment check dialog in Extras.
+- [x] J11d Deployment check. Extras gains a "Deployment" card whose "Check deployment" dialog runs read-only checks of the chosen chain's wiring at one block (project, controller, revnet configuration, hook routing, shop hook bindings, store, factory, pricing, an optional operator's shop powers) and, apart from them, of the indexer's record. `src/deployment-check.js` (loaded on first use) is a hand port of the SDK's checker, pinned to that checker's own reports for 27 scenarios (`test/fixtures/deployment-check-vectors.json`).
 
 ## Plan refinement
 - **Objective:** Juicescan names, edits and launches Sticky recipients the way juicebox.money does, and gains its deployment check.
@@ -208,4 +209,5 @@ jango, 2026-11-15: "1. add to juicescan. 2. lets add to juicescan."
 - **Resource budget:** One pull request for Sticky, one for the deployment check.
 - **Authority and recovery:** Pull requests only; no merge word for this round yet.
 - **Agent-system impact:** None.
+- J11d kept as the SDK has it: a project on a retired controller generation reads "Custom / unsupported". Not run against a live chain; the dialog was not rendered in a browser (it needs a live project), its DOM test covers it.
 - J11 not built: a different Sticky token per chain in one row (the row is refused per-chain values, as juicebox.money refuses them in a file). The split editor row was not rendered in a browser (it needs a live project); its DOM test covers it.

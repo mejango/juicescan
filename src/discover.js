@@ -15962,9 +15962,41 @@ function renderProjectDraftExport(project) {
   return card;
 }
 
+var DEPLOYMENT_GROUP_QUERY = 'query($suckerGroupId: String!, $version: Int!, $limit: Int!) { '
+  + 'projects(where: { suckerGroupId: $suckerGroupId, version: $version }, limit: $limit) { items { chainId projectId } } }';
+// Read-only checks of a deployment's wiring and of the indexer's record for it (src/deployment-check.js, loaded on first use).
+function renderDeploymentCheckCard(project) {
+  var card = el('div', 'detail-card extras-card');
+  var title = el('div', 'detail-card-title'); title.textContent = 'Deployment'; card.appendChild(title);
+  var body = el('div', 'detail-card-body extras-body');
+  var intro = el('div', 'extras-payer-copy'); intro.textContent = 'Check this project’s deployment and data availability.'; body.appendChild(intro);
+  var status = el('div', 'operator-edit-status'); body.appendChild(status);
+  var actions = el('div', 'operator-edit-actions extras-actions');
+  var button = el('a', 'operator-cta'); button.href = '#'; button.textContent = 'Check deployment'; actions.appendChild(button);
+  body.appendChild(actions); card.appendChild(body);
+  button.addEventListener('click', function (event) {
+    event.preventDefault(); status.className = 'operator-edit-status'; status.textContent = '';
+    var chains = projectChainList(project);
+    import('./deployment-check.js').then(function (check) {
+      check.openDeploymentCheck({
+        el: el, openModal: openModal, copyText: copyText, clientFor: clientFor,
+        deployments: chains.map(function (chain) { return { chainId: Number(chain.id), projectId: Number(pidOn(project, chain.id)), name: chain.name || chainNameFor(chain.id) }; }),
+        selected: Math.max(0, chains.findIndex(function (chain) { return Number(chain.id) === Number(project.chainId); })),
+        loadRow: function (chainId, projectId) { return loadBendystrawProjectRow(chainId + ':' + projectId, { chainId: chainId, projectId: projectId }); },
+        groupMembers: function (suckerGroupId) {
+          return bendystrawQuery(DEPLOYMENT_GROUP_QUERY, { suckerGroupId: suckerGroupId, version: BENDYSTRAW_VERSION, limit: 50 })
+            .then(function (data) { return (data && data.projects && data.projects.items) || []; });
+        },
+      });
+    }, function () { status.className = 'operator-edit-status error'; status.textContent = CHUNK_FAILED_TEXT; });
+  });
+  return card;
+}
+
 export function renderExtrasSection(project) {
   var section = el('div', 'detail-section');
   section.appendChild(renderProjectDraftExport(project));
+  section.appendChild(renderDeploymentCheckCard(project));
   var card = el('div', 'detail-card extras-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Payer address'; card.appendChild(title);
 

@@ -7,7 +7,7 @@
 //   same band, more liquidity  INCREASE_LIQUIDITY + CLOSE x2 [+ SWEEP]: the wallet funds the difference, with 1%
 //                              price headroom in the maxima.
 //   same band, less liquidity  DECREASE_LIQUIDITY + TAKE_PAIR: the freed share returns behind 95% floors.
-//   new band                   BURN_POSITION + MINT_POSITION + CLOSE x2 [+ SWEEP]: the burn funds the mint inside
+//   new band                   BURN_POSITION + MINT_POSITION + SETTLE per funded currency + TAKE_PAIR: the burn funds the mint inside
 //                              the unlock; only the difference touches the wallet, in either direction.
 //   nothing on either side     BURN_POSITION + TAKE_PAIR: the full exit.
 // Every path reverts as a whole if the live price outruns the reviewed maxima or floors.
@@ -44,6 +44,24 @@ export function lpCloseActions(pool, account, value) {
   var parameters = [encodeAbiParameters([{ type: 'address' }], [key.currency0]), encodeAbiParameters([{ type: 'address' }], [key.currency1])];
   if (value > 0n) parameters.push(encodeAbiParameters([{ type: 'address' }, { type: 'address' }], [pool.pairIsC0 ? key.currency0 : key.currency1, account]));
   return { actions: value > 0n ? '121214' : '1212', parameters: parameters };
+}
+
+// Settlement of a plan that burns one band to mint another. The mint's maxima bound what the mint takes in, not what
+// the wallet pays once the burn's return is counted, so closing the net would let a price move pull more than was
+// reviewed. This pays in exactly the reviewed caps (SETTLE, payer is the caller) and takes everything left over
+// (TAKE_PAIR), which reverts when a currency is still owed: the wallet can never pay more than the caps.
+// value: the native cap; erc20: [{ currency, max }] caps.
+export function lpCappedClose(pool, account, value, erc20) {
+  var key = pool.key, actions = '', parameters = [];
+  [key.currency0, key.currency1].forEach(function (currency) {
+    var approved = erc20.find(function (entry) { return entry.currency.toLowerCase() === currency.toLowerCase(); });
+    var cap = /^0x0{40}$/.test(currency) ? value : approved ? approved.max : 0n;
+    if (cap <= 0n) return;
+    actions += '0b';
+    parameters.push(encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }, { type: 'bool' }], [currency, cap, true]));
+  });
+  parameters.push(encodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'address' }], [key.currency0, key.currency1, account]));
+  return { actions: actions + '11', parameters: parameters };
 }
 
 export function lpEncodeUnlock(actions, parameters) {
@@ -157,8 +175,8 @@ export function lpMoveStillCovered(move, sqrtP) {
   return minted.amount0 - returned.amount0 <= move.burned.funding0 && minted.amount1 - returned.amount1 <= move.burned.funding1;
 }
 
-// The whole unlock: a plan that returns funds ends in TAKE_PAIR; one the wallet may fund closes both currencies
-// and sweeps unused native value back.
+// The whole unlock: a plan that returns funds ends in TAKE_PAIR; an increase closes both currencies and sweeps
+// unused native value back; a move pays in its reviewed caps and takes the rest (lpCappedClose).
 export function lpEditPlan(pool, position, target, range, account) {
   var ops = lpEditOperations(pool, position, target, range, account);
   var key = pool.key, parts = ops.parameters.slice(), actions = ops.actions;
@@ -166,7 +184,7 @@ export function lpEditPlan(pool, position, target, range, account) {
     actions += '11';
     parts.push(encodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'address' }], [key.currency0, key.currency1, account]));
   } else {
-    var close = lpCloseActions(pool, account, ops.value);
+    var close = ops.kind === 'move' ? lpCappedClose(pool, account, ops.value, ops.erc20) : lpCloseActions(pool, account, ops.value);
     actions += close.actions;
     parts = parts.concat(close.parameters);
   }

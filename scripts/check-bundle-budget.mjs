@@ -12,12 +12,14 @@ import { gzipSync } from 'node:zlib';
 // The old-pool position move, the raised-by-chain hover and the exact pay route choice load with the project page:
 // startup measures 736,158 B gzip.
 // Sticky recipients are named in split lists and the feed, which load with the project page: startup measures 739,059 B gzip.
-const startupBudget = { raw: 3_930_000, gzip: 740_000 };
+// The Extras card that opens the deployment check, and the shared code its lazy module splits out: startup measures 740,085 B gzip.
+const startupBudget = { raw: 3_930_000, gzip: 741_000 };
 
 const budgets = {
   // Open-first states (pending review rows, busy buttons, stale-while-refreshing marks) measure 248,424 B raw, 50,173 B gzip.
   // The pay notice note, the held-writes list and the chart note measure 251,283 B raw, 50,786 B gzip.
-  'dist/style.css': { raw: 252_000, gzip: 50_900 },
+  // The Sticky week fields and the deployment check's result list measure 252,240 B raw, 50,944 B gzip.
+  'dist/style.css': { raw: 253_000, gzip: 51_100 },
   'dist/learn.html': { raw: 42_000, gzip: 12_200 },
   // The Build guide mirrors juicebox.money's 39 sections (2026-11); the page measures 114,994 B raw, 28,983 B gzip.
   'dist/build.html': { raw: 118_000, gzip: 30_000 },
@@ -114,7 +116,8 @@ const totalGzip = (await Promise.all(distributionFiles.map(gzipOf))).reduce((sum
 // The old-pool move, raised by chain, the issuance preview and the lazy position editor: measured 2,153,861 B gzip.
 // The two-sided market: its builders, the market mode of the add form and the market editor: measured 2,160,828 B gzip.
 // Sticky recipients (labels, the editor option, launch checks, .jb rows) and claiming a market's fees: measured 2,166,166 B gzip.
-const totalGzipBudget = 2_167_000;
+// The deployment check (a lazy port of the SDK's checker, with its dialog): measured 2,173,201 B gzip.
+const totalGzipBudget = 2_174_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);
