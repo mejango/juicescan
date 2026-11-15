@@ -100,3 +100,47 @@ export async function checkStickyToken(client, chainId, token, where) {
   var symbol = await client.readContract({ address: token, abi: STICKY_TOKEN_ABI, functionName: 'symbol' }).catch(function () { return ''; });
   return { ok: true, symbol: symbol };
 }
+
+function projectTokenProblem(erc20Of, chain) {
+  return erc20Of(chain.id).then(function (token) {
+    return token && !/^0x0{40}$/i.test(token) ? null : 'This project has no ERC-20 on ' + chain.name + ' yet, so Sticky holders can\'t get its reserved tokens. Create the ERC-20 first.';
+  }, function () { return 'Could not check this project\'s ERC-20 on ' + chain.name + '.'; });
+}
+
+// Why a set of splits cannot be sent, or null: every Sticky split's group is one the distributor honors, its token
+// is a registered Sticky token on each chain it goes to, and (for reserved tokens) the project has an ERC-20 there,
+// since Sticky holders are paid in the ERC-20.
+// splitsByChain: { [chainId]: split[] }; chains: [{ id, name }]; clientFor(chainId): a viem public client;
+// erc20Of(chainId): resolves the project's token address there (zero if none), given only when `reserved`.
+export async function stickySplitsProblem(splitsByChain, chains, reserved, clientFor, erc20Of) {
+  var checks = [];
+  for (var i = 0; i < chains.length; i++) {
+    var chain = chains[i], sticky = (splitsByChain[chain.id] || []).filter(function (split) { return isStickySplit(split, chain.id); });
+    if (!sticky.length) continue;
+    for (var j = 0; j < sticky.length; j++) {
+      var invalid = validateStickyGroupId(sticky[j].projectId || 0);
+      if (invalid) return invalid;
+    }
+    var tokens = {};
+    sticky.forEach(function (split) { tokens[String(split.beneficiary).toLowerCase()] = split.beneficiary; });
+    Object.keys(tokens).forEach(function (key) {
+      checks.push(checkStickyToken(clientFor(chain.id), chain.id, tokens[key], chain.name).then(function (result) { return result.ok ? null : result.reason; }));
+    });
+    if (reserved) checks.push(projectTokenProblem(erc20Of, chain));
+  }
+  var problems = await Promise.all(checks);
+  return problems.filter(Boolean)[0] || null;
+}
+
+// The launch and queue forms keep a Sticky recipient as a hook row: the hook is the distributor, the row's address
+// the Sticky token and its project id the holders' group.
+export function isStickyRecipient(rec) {
+  return !!rec && rec.type === 'customhook' && typeof rec.hookAddress === 'string' && rec.hookAddress.toLowerCase() === STICKY_DISTRIBUTOR;
+}
+export var STICKY_NEW_PROJECT_RESERVED = 'Sticky holders can get reserved tokens only once this project has an ERC-20. A new project has none at launch, so add this split after you create the ERC-20.';
+// Why a form's Sticky row cannot be sent, or null. `weeksError` is what the row's week fields last refused.
+export function stickyRecipientIssue(rec) {
+  if (rec.stickyError) return rec.stickyError;
+  if (!/^0x[0-9a-fA-F]{40}$/.test(String(rec.address || '').trim())) return 'Enter the Sticky token\'s 0x address.';
+  return validateStickyGroupId(rec.projectId || 0);
+}

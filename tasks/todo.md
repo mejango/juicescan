@@ -189,3 +189,23 @@ Not verified against live wallets or a live Safe. The page handoff, handle URL t
 - J10b new copy for jango: "Create a multisig so its signers approve decisions together." / "Use your wallet or an existing multisig." / "Create a multisig" / "Already have an owner in mind?" / "+ Add signer" / "Approval policy" / "The multisig is created in the launch, at the same address on every chain." The first six mirror juicebox.money; the last is new.
 - J10b review: Codex `gpt-6.1-sol` four passes. Fixed: the Deploy summary named the wallet as operator; a resumed direct launch skipped the Safe confirmation; a resumed review showed only the encoded batch (it now names the Safe, its signers and the launch inside). Pass 4 CLEAN. Full check green: 2650 unit tests, 148 browser tests. Total budget 2,151,000 B gzip, measured 2,149,531.
 - J10e evidence: unit tests for the choice, the run and the revert reading (seven node answers through viem's own error handling). Not run against a live chain.
+
+## 2026-11-15: Sticky split recipient and the deployment check (J11)
+
+jango, 2026-11-15: "1. add to juicescan. 2. lets add to juicescan."
+
+- [x] J11a Sticky recipient, shown. A split whose hook is the chain's StickyDistributor reads "Sticky holders stuck 4 to 52 weeks → SYMBOL" in the split lists, shop item routing, the activity feed, the edit review and the decoded call (`src/sticky.js`).
+- [x] J11b Sticky recipient, edited. The split editor's Hook type offers Sticky (token, all holders or holders stuck N weeks, optional maximum). Before anything is signed, each chain is checked the way the distributor checks it (`PROJECT_ID()` then `StickyHook.tokenOf`), and reserved tokens need the project's ERC-20 there.
+- [x] J11c Sticky recipient, launched and queued. Create and the queue form offer Sticky for payouts and reserved tokens (never shop items). A new custom project's reserved tokens are refused with juicebox.money's sentence, since it has no ERC-20 at launch. `.jb` files carry it as `to: "sticky"`, both ways.
+- [ ] J11d Deployment check dialog in Extras.
+
+## Plan refinement
+- **Objective:** Juicescan names, edits and launches Sticky recipients the way juicebox.money does, and gains its deployment check.
+- **System fit:** One module, `src/sticky.js`, owns the addresses, the group rule, the labels and the pre-sign check. The forms keep a Sticky row as the hook row it is onchain (hook: distributor, address: token, project id: group), so encoding, drafts and recovery are unchanged.
+- **Reuse and simplicity:** No new record type and no new encoder path. A slot holding per-chain values is never Sticky, so one token is checked on every chain. No SDK.
+- **Evidence and unknowns:** Addresses are hand-pinned from the Sticky repository (Sticky is not in deploy-all); `cast code` on Base and Ethereum shows both contracts have code. Group rule and labels follow the SDK's `v6/sticky`. Not sent on any chain.
+- **Verification:** Unit and DOM tests (`test/sticky.test.js`, `create-sticky.test.js`, `splits-edit-sticky.test.js`, `.jb` round trip), Create rendered locally with live services blocked, the full `npm run check`, Codex until clean.
+- **Resource budget:** One pull request for Sticky, one for the deployment check.
+- **Authority and recovery:** Pull requests only; no merge word for this round yet.
+- **Agent-system impact:** None.
+- J11 not built: a different Sticky token per chain in one row (the row is refused per-chain values, as juicebox.money refuses them in a file). The split editor row was not rendered in a browser (it needs a live project); its DOM test covers it.

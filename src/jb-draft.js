@@ -5,6 +5,7 @@
 import {
   emptyJbDraft, emptyJbDraftItem, emptyJbDraftSplit, emptyJbDraftStage, JbDraftError, jbDraftDecimal, jbDraftTokenCurrency, jbDraftUnsupported,
 } from './jb-draft-format.js';
+import { decodeStickyGroupId, isStickyRecipient, stickyDistributorAddress, stickyGroupId } from './sticky.js';
 
 var SITE = 'Juicescan';
 function refuse(what) { throw jbDraftUnsupported(SITE, what); }
@@ -14,7 +15,7 @@ var DAY = 86400;
 var PAYOUT_MODE_OUT = { none: 'none', unlimited: 'all', limited: 'amounts' };
 var PAYOUT_MODE_IN = { none: 'none', all: 'unlimited', amounts: 'limited' };
 var SPLIT_TO = { wallet: 'address', project: 'project', lphook: 'fundMarket', customhook: 'hook' };
-var SPLIT_TYPE = { address: 'wallet', project: 'project', fundMarket: 'lphook', hook: 'customhook' };
+var SPLIT_TYPE = { address: 'wallet', project: 'project', fundMarket: 'lphook', hook: 'customhook', sticky: 'customhook' };
 
 function text(value) { return String(value == null ? '' : value).trim(); }
 // A typed number as the format's plain decimal. Throws on one the file can't hold.
@@ -74,12 +75,23 @@ export function toJbDraft(state, deps) {
   }
   function splitOut(row, keys, lockOk, amounts) {
     var to = SPLIT_TO[row.type] || 'address';
+    // A Sticky row is one token and one valid group on every chain; anything else on the distributor stays a hook row.
+    var stickyGroup = isStickyRecipient(row) && !Object.keys(chainMap(keys.address)).length && !Object.keys(chainMap(keys.projectId, num)).length
+      ? decodeStickyGroupId(row.projectId || 0) : null;
+    if (stickyGroup && (stickyGroup.kind === 'tenure' || !Number(row.projectId))) to = 'sticky';
     var out = emptyJbDraftSplit(to);
     out.lockedUntil = lockOk ? Number(row.lockedUntil) || 0 : 0;
     if (amounts) { out.amount = num(row.amountEth); out.amountPerChain = chainMap(keys.amount, num); }
     else out.share = positive(row.percent) || '0';
     // The Fund market hook pays the launching wallet, so its row names no one.
     if (to === 'fundMarket') return out;
+    if (to === 'sticky') {
+      out.address = text(row.address);
+      out.sticky = stickyGroup.kind === 'tenure'
+        ? { group: 'tenure', minWeeks: String(stickyGroup.minWeeks), maxWeeks: stickyGroup.maxWeeks ? String(stickyGroup.maxWeeks) : '' }
+        : { group: 'all', minWeeks: '', maxWeeks: '' };
+      return out;
+    }
     out.address = text(row.address);
     out.addressPerChain = chainMap(keys.address);
     if (to === 'project' || to === 'hook') {
@@ -329,7 +341,6 @@ export function fromJbDraft(file, deps) {
   }
 
   function splitIn(row, keys, lockOk, amounts) {
-    if (row.to === 'sticky') refuse('a Sticky split');
     if (row.lockedUntil > 0 && !lockOk) refuse(revnet ? 'a locked split' : 'a locked split in a stage with no cycle');
     var out = {
       type: SPLIT_TYPE[row.to], address: '', projectId: 0, percent: amounts ? 0 : Number(row.share) || 0, amountEth: '',
@@ -342,6 +353,16 @@ export function fromJbDraft(file, deps) {
       return out;
     }
     out.address = row.address;
+    if (row.to === 'sticky') {
+      if (hasEntries(row.addressPerChain)) refuse('a Sticky split that differs by chain');
+      out.hookAddress = stickyDistributorAddress(1);
+      if (row.sticky.group === 'tenure') {
+        var minWeeks = Number(row.sticky.minWeeks), maxWeeks = Number(row.sticky.maxWeeks || 0), group;
+        try { group = stickyGroupId(minWeeks, maxWeeks); } catch (error) { refuse('a Sticky split whose weeks are not a group'); }
+        out.projectId = Number(group);
+      }
+      return out;
+    }
     chainAddressesIn(row.addressPerChain, keys.address);
     if (row.to === 'project' || row.to === 'hook') {
       if (row.projectId && !Number.isSafeInteger(Number(row.projectId))) refuse('a project id that is not a whole number');

@@ -242,6 +242,32 @@ describe('the shared .jb file on Juicescan', () => {
     expect(() => buildLaunchArgs(state, 1, ALICE, 'ipfs://x', SALT, 2000000000)).toThrow('0.0000015 has more decimal places than its token holds.');
   });
 
+  it('carries a Sticky split as the distributor hook, its token and its group', () => {
+    const DISTRIBUTOR = '0x489d011dc34983eb2e219a5010806caa418cb46b';
+    const state = revnetState();
+    // The fixture gives the first reserved slot a per-chain address, and a slot that differs by chain is never Sticky.
+    state.stages[0].reservedRecipients = [
+      wallet({ type: 'customhook', hookAddress: DISTRIBUTOR, address: TOKEN, projectId: 0, percent: 1 }),
+      wallet({ type: 'customhook', hookAddress: DISTRIBUTOR, address: TOKEN, projectId: 4052, percent: 10 }),
+      wallet({ type: 'customhook', hookAddress: DISTRIBUTOR, address: TOKEN, projectId: 0, percent: 5 }),
+      // A group the distributor would reroute is not a Sticky row: it stays the hook row it is.
+      wallet({ type: 'customhook', hookAddress: DISTRIBUTOR, address: TOKEN, projectId: 52004, percent: 5 }),
+    ];
+    const rows = createDraftObject(state).stages[0].reserved;
+    expect(rows[0].to).toBe('hook');
+    expect(rows.slice(1).map((row) => [row.to, row.address, row.hook, row.projectId, row.sticky])).toEqual([
+      ['sticky', TOKEN, '', '', { group: 'tenure', minWeeks: '4', maxWeeks: '52' }],
+      ['sticky', TOKEN, '', '', { group: 'all', minWeeks: '', maxWeeks: '' }],
+      ['hook', TOKEN, DISTRIBUTOR, '52004', null],
+    ]);
+    const back = roundTrip(state);
+    expect(back.stages[0].reservedRecipients.slice(1).map((row) => [row.type, row.hookAddress, row.address, row.projectId])).toEqual([
+      ['customhook', DISTRIBUTOR, TOKEN, 4052], ['customhook', DISTRIBUTOR, TOKEN, 0], ['customhook', DISTRIBUTOR, TOKEN, 52004],
+    ]);
+    expect(launchOf(back)).toBe(launchOf(state));
+    expect(launchOf(state)).toContain(DISTRIBUTOR);
+  });
+
   it('refuses a file holding what this form cannot express, whole', () => {
     const cant = (what) => "Juicescan can't launch this file: it has " + what + '.';
     const project = (patch, stagePatch) => {
@@ -256,7 +282,8 @@ describe('the shared .jb file on Juicescan', () => {
     expect(project({ chains: [1, 84532] })).toThrow(cant('mainnets and testnets together'));
     expect(project({ linkChains: false })).toThrow(cant('chains that are not linked'));
     expect(project({ ownerPerChain: { 1: BOB } })).toThrow(cant('a value for a chain it does not launch on'));
-    expect(project({}, { reserved: [row({ to: 'sticky', sticky: { group: 'all', minWeeks: '', maxWeeks: '' } })] })).toThrow(cant('a Sticky split'));
+    expect(project({}, { payouts: [{ token: 'eth', mode: 'all', currency: 'eth', splits: [row({ to: 'sticky', sticky: { group: 'tenure', minWeeks: '52', maxWeeks: '4' } })] }] }))
+      .toThrow(cant('a Sticky split whose weeks are not a group'));
     expect(project({}, { duration: 0, reserved: [row({ lockedUntil: 2200000000 })], payouts: [{ token: 'eth', mode: 'none', currency: 'eth', splits: [] }] }))
       .toThrow(cant('a locked split in a stage with no cycle'));
     expect(project({}, { duration: 4294967295 })).toThrow(cant('an approval rule on a stage that never ends'));

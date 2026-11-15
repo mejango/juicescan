@@ -1,6 +1,6 @@
 // Sticky split recipients follow juicebox.money's SDK module (v6/sticky): same recognition, group rules and labels.
 import { describe, expect, it } from 'vitest';
-import { checkStickyToken, decodeStickyGroupId, describeStickySplit, isStickySplit, stickyDistributorAddress, stickyGroupId, stickyRecipientLabel, validateStickyGroupId } from '../src/sticky.js';
+import { checkStickyToken, decodeStickyGroupId, describeStickySplit, isStickySplit, stickyDistributorAddress, stickyGroupId, stickyRecipientLabel, stickySplitsProblem, validateStickyGroupId } from '../src/sticky.js';
 import { describeSplitGroups } from '../src/tx-pretty-args.js';
 
 var DISTRIBUTOR = '0x489d011dc34983eb2e219a5010806caa418cb46b';
@@ -60,5 +60,40 @@ describe('Sticky split recipients', () => {
     expect(await checkStickyToken(client({ PROJECT_ID: 7n, tokenOf: DISTRIBUTOR, symbol: 'X' }), 8453, TOKEN, 'Base')).toEqual({ ok: false, reason: '0x1234…5678 is not a Sticky token on Base.' });
     expect(await checkStickyToken(client({ PROJECT_ID: new Error('timeout') }), 8453, TOKEN, 'Base')).toEqual({ ok: false, reason: 'Could not check the Sticky token on Base.' });
     expect(await checkStickyToken(client({}), 137, TOKEN, 'Polygon')).toEqual({ ok: false, reason: 'Sticky is not deployed on Polygon.' });
+  });
+});
+
+describe('stickySplitsProblem', () => {
+  const distributor = stickyDistributorAddress(8453);
+  const token = '0x1111111111111111111111111111111111111111';
+  const chains = [{ id: 8453, name: 'Base' }, { id: 10, name: 'Optimism' }];
+  // A client whose Sticky hook registered `token` for project 7 on the chains in `registeredOn`.
+  const clientFor = (registeredOn) => (chainId) => ({
+    readContract: async ({ functionName }) => {
+      if (functionName === 'PROJECT_ID') return 7n;
+      if (functionName === 'tokenOf') return registeredOn.includes(chainId) ? token : '0x0000000000000000000000000000000000000000';
+      return 'STK';
+    },
+  });
+  const split = (projectId) => ({ hook: distributor, beneficiary: token, projectId });
+  const erc20 = (address) => async () => address;
+
+  it('passes splits with no Sticky recipient without reading anything', async () => {
+    const never = () => { throw new Error('read'); };
+    expect(await stickySplitsProblem({ 8453: [{ hook: '0x0000000000000000000000000000000000000000' }] }, chains, true, never, never)).toBe(null);
+  });
+  it('passes a registered token on every chain', async () => {
+    expect(await stickySplitsProblem({ 8453: [split(0n)], 10: [split(4052n)] }, chains, false, clientFor([8453, 10]))).toBe(null);
+  });
+  it('names the chain where the token is not a Sticky token', async () => {
+    expect(await stickySplitsProblem({ 8453: [split(0n)], 10: [split(0n)] }, chains, false, clientFor([8453]))).toMatch(/not a Sticky token on Optimism/);
+  });
+  it('refuses a group the distributor would reroute', async () => {
+    expect(await stickySplitsProblem({ 8453: [split(52004n)] }, chains, false, clientFor([8453]))).toMatch(/Maximum weeks/);
+  });
+  it('needs the project ERC-20 for reserved tokens', async () => {
+    const zero = '0x0000000000000000000000000000000000000000';
+    expect(await stickySplitsProblem({ 8453: [split(0n)] }, chains, true, clientFor([8453]), erc20(zero))).toMatch(/no ERC-20 on Base/);
+    expect(await stickySplitsProblem({ 8453: [split(0n)] }, chains, true, clientFor([8453]), erc20(token))).toBe(null);
   });
 });
