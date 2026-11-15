@@ -5,7 +5,7 @@ import { assertScheduleFresh, assertOrderedRulesetReceipt } from './ruleset-sche
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { PERMISSION_IDS } from './permission-ids.js';
-import { STICKY_MAX_CRITERIA_WEEKS, checkStickyToken, decodeStickyGroupId, isStickySplit, stickyDistributorAddress, stickyGroupId, stickyRecipientLabel, stickySplitsProblem } from './sticky.js';
+import { STICKY_MAX_CRITERIA_WEEKS, checkStickyToken, decodeStickyGroupId, isStickySplit, stickyDistributorAddress, stickyGroupFromFields, stickyRecipientLabel, stickySplitsProblem } from './sticky.js';
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
 import { MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay } from './defifa.js';
 import { PAY_MAX_SLIPPAGE_BPS, decodePayFailure, payRetrySlippageBps } from './pay-failure.js';
@@ -24464,11 +24464,7 @@ export function addSplitRecipientRow(rowsBox, rows, opts) {
   var stickySub = sub(stickyBox);
   // The group the fields ask for; throws the reason they cannot.
   function stickyGroupOf() {
-    if (stickyGroup.value === 'all') return 0n;
-    var min = (stickyMin.value || '').trim(), max = stickyMaxCheck.checked ? (stickyMax.value || '').trim() : '0';
-    if (!min) throw new Error('Enter the minimum weeks');
-    if (!/^[0-9]+$/.test(min) || !/^[0-9]+$/.test(max || 'x')) throw new Error('Enter whole weeks');
-    return stickyGroupId(Number(min), Number(max));
+    return stickyGroupFromFields(stickyGroup.value === 'tenure', stickyMin.value, stickyMaxCheck.checked, stickyMax.value);
   }
   var stickyCheckSeq = 0;
   function refreshSticky() {
@@ -25744,6 +25740,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   if (newShop) { setStatus('Pinning new shop items…', 'pending'); await createFlow.pinShopItemsMetadata(state); await createFlow.resolveItemSplitProjects(state, selected[0].id); }
   // A Sticky recipient is checked on every chain it is queued on, the check the distributor itself runs.
   var stickyQueueProblem = await createFlow.stickyRecipientsProblem(state, selected.map(function (chain) { return chain.id; }),
+    function (cid) { return createFlow.buildQueueRulesetConfigs(state, cid, 0); },
     function (cid) { return read(cid, 'JBTokens', tokenOfAbi, 'tokenOf', [pidOn(project, cid)]); });
   if (stickyQueueProblem) throw new Error(stickyQueueProblem);
 
@@ -26182,6 +26179,8 @@ export async function resolveSplitsEditByChain(splits, chains, sourceChainId, re
   if (remote) {
     for (var i = 0; i < splits.length; i++) {
       var projectId = BigInt(splits[i].projectId);
+      // A Sticky split's project id is its holders' group, the same on every chain, never a project to look up.
+      if (isStickySplit({ hook: materializeChainValue(splits[i].hook, sourceChainId) }, sourceChainId)) continue;
       if (projectId === 0n || projectMaps[projectId.toString()]) continue;
       if (projectId <= 0n || !Number.isSafeInteger(Number(projectId))) throw new Error('Could not verify recipient project #' + projectId + ' across chains.');
       var info = await resolveProject(Number(projectId), sourceChainId);
@@ -26198,7 +26197,7 @@ export async function resolveSplitsEditByChain(splits, chains, sourceChainId, re
     byChain[cid] = splits.map(function (split) {
       var out = Object.assign({}, split);
       var projectId = BigInt(split.projectId);
-      if (projectId > 0n && cid !== sourceChainId) {
+      if (projectId > 0n && cid !== sourceChainId && !isStickySplit({ hook: materializeChainValue(split.hook, sourceChainId) }, sourceChainId)) {
         var localId = Number(projectMaps[projectId.toString()][cid]);
         if (!Number.isSafeInteger(localId) || localId <= 0) {
           throw new Error('Could not verify recipient project #' + projectId + ' on ' + (chain.name || chainNameOf(cid)) + '.');

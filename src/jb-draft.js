@@ -5,7 +5,7 @@
 import {
   emptyJbDraft, emptyJbDraftItem, emptyJbDraftSplit, emptyJbDraftStage, JbDraftError, jbDraftDecimal, jbDraftTokenCurrency, jbDraftUnsupported,
 } from './jb-draft-format.js';
-import { decodeStickyGroupId, isStickyRecipient, stickyDistributorAddress, stickyGroupId } from './sticky.js';
+import { decodeStickyGroupId, isStickyRecipient, stickyDistributorAddress, stickyGroupFromFields } from './sticky.js';
 
 var SITE = 'Juicescan';
 function refuse(what) { throw jbDraftUnsupported(SITE, what); }
@@ -87,6 +87,8 @@ export function toJbDraft(state, deps) {
     if (to === 'fundMarket') return out;
     if (to === 'sticky') {
       out.address = text(row.address);
+      // Week fields the form refused are written as typed, so the file is refused too, never read as the last valid group.
+      if (row.stickyError && row.stickyWeeks) { out.sticky = { group: 'tenure', minWeeks: num(row.stickyWeeks.min), maxWeeks: row.stickyWeeks.hasMax ? num(row.stickyWeeks.max) || '0' : '' }; return out; }
       out.sticky = stickyGroup.kind === 'tenure'
         ? { group: 'tenure', minWeeks: String(stickyGroup.minWeeks), maxWeeks: stickyGroup.maxWeeks ? String(stickyGroup.maxWeeks) : '' }
         : { group: 'all', minWeeks: '', maxWeeks: '' };
@@ -357,8 +359,9 @@ export function fromJbDraft(file, deps) {
       if (hasEntries(row.addressPerChain)) refuse('a Sticky split that differs by chain');
       out.hookAddress = stickyDistributorAddress(1);
       if (row.sticky.group === 'tenure') {
-        var minWeeks = Number(row.sticky.minWeeks), maxWeeks = Number(row.sticky.maxWeeks || 0), group;
-        try { group = stickyGroupId(minWeeks, maxWeeks); } catch (error) { refuse('a Sticky split whose weeks are not a group'); }
+        var group;
+        try { group = stickyGroupFromFields(true, row.sticky.minWeeks, row.sticky.maxWeeks !== '', row.sticky.maxWeeks); } catch (error) { refuse('a Sticky split whose weeks are not a group'); }
+        if (group === 0n) refuse('a Sticky split whose weeks are not a group');
         out.projectId = Number(group);
       }
       return out;

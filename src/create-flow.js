@@ -29,7 +29,7 @@ import {
 import { pinFile, pinJson, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { getAuditPrompt } from './prompts.js';
 import { clientFor, mountIssuancePriceChart } from './discover.js';
-import { STICKY_MAX_CRITERIA_WEEKS, STICKY_NEW_PROJECT_RESERVED, decodeStickyGroupId, isStickyRecipient, stickyDistributorAddress, stickyGroupId, stickyRecipientIssue, stickyRecipientLabel, stickySplitsProblem } from './sticky.js';
+import { STICKY_MAX_CRITERIA_WEEKS, STICKY_NEW_PROJECT_RESERVED, decodeStickyGroupId, isStickyRecipient, stickyDistributorAddress, stickyEncodedProblem, stickyGroupFromFields, stickyRecipientIssue, stickyRecipientLabel } from './sticky.js';
 import { CREATE_BATCH_ABI, MAX_SAFE_SIGNERS, MIN_SAFE_SIGNERS, bundleSafeLaunch, resolveSafePlan, safePolicyIssue, safeSignerAddress, verifySafe, verifySafeSimulation } from './safe-create.js';
 import { clearLaunchCalls, launchCallsFor, loadLaunchCalls, provesLaunch, saveLaunchCalls, unfinishedLaunchOutcome } from './launch-retry.js';
 import { relayrForwarderState, relayrSignedProofOf, decodeForwardedRequest, buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession, restoreUnsentRelayrPayment, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession } from './relayr.js';
@@ -2537,6 +2537,7 @@ function appendRecipientPicker(toFieldNode, rec, render, opts) {
   typeSel.addEventListener('change', function () {
     clearPerChain();
     rec.type = typeSel.value === 'address' ? 'wallet' : typeSel.value === 'project' ? 'project' : hookDefault;
+    delete rec.stickyWeeks; delete rec.stickyError;
     render();
   });
   head.appendChild(typeSel);
@@ -2662,18 +2663,16 @@ function stickyFields(col, sub, rec, render) {
   sub(token);
   // The week fields as typed, kept while they do not make a group, so a refused entry is never sent as another.
   var stored = decodeStickyGroupId(rec.projectId || 0);
-  var weeks = rec.stickyWeeks || (stored.kind === 'tenure'
+  function groupOf(fields) { return Number(stickyGroupFromFields(fields.tenure, fields.min, fields.hasMax, fields.max)); }
+  // Fields typed earlier are shown only while they still say what the row holds (or are still refused).
+  var typed = rec.stickyWeeks;
+  if (typed && !rec.stickyError) { try { if (groupOf(typed) !== (Number(rec.projectId) || 0)) typed = null; } catch (error) { typed = null; } }
+  var weeks = typed || (stored.kind === 'tenure'
     ? { tenure: true, min: String(stored.minWeeks), max: stored.maxWeeks ? String(stored.maxWeeks) : '', hasMax: !!stored.maxWeeks }
     : { tenure: false, min: '', max: '', hasMax: false });
   function apply() {
     rec.stickyWeeks = weeks; rec.stickyError = '';
-    if (!weeks.tenure) { rec.projectId = 0; return; }
-    var min = weeks.min.trim(), max = weeks.hasMax ? weeks.max.trim() : '0';
-    try {
-      if (!min) throw new Error('Enter the minimum weeks');
-      if (!/^[0-9]+$/.test(min) || !/^[0-9]+$/.test(max)) throw new Error('Enter whole weeks');
-      rec.projectId = Number(stickyGroupId(Number(min), Number(max)));
-    } catch (error) { rec.stickyError = error.message; }
+    try { rec.projectId = groupOf(weeks); } catch (error) { rec.stickyError = error.message; }
     problem.textContent = rec.stickyError || '';
   }
   var group = el('select', 'field create-input create-split-subsel');
@@ -3742,28 +3741,20 @@ function splitTotalIssue(state) {
 
 // Walk every split / payout / auto-issuance recipient with a non-zero value; return a one-line description
 // of the first that has no valid destination (so funds/tokens would be sent to 0x0), or null if all are fine.
-// Why the form's Sticky recipients cannot be sent on `chainIds`, or null: each row is complete and its token is a
-// registered Sticky token on every chain. erc20Of(chainId), given for a live project, also requires the project's
-// ERC-20 wherever reserved tokens go to Sticky holders.
-export async function stickyRecipientsProblem(state, chainIds, erc20Of) {
-  var reserved = [], payouts = [], kinds = currentPayoutKinds(state);
-  function live(rows) { return (rows || []).filter(function (r) { return isStickyRecipient(r) && ((Number(r.percent) || 0) > 0 || (Number(r.amountEth) || 0) > 0); }); }
+// Why the form's Sticky recipients cannot be sent on `chainIds`, or null. The rows must be complete, and every
+// Sticky split in what is about to be signed (encodedOn(chainId): that chain's call arguments, per-chain values
+// included) must name a valid group and a registered Sticky token on its chain. erc20Of(chainId), given for a
+// live project, also requires the project's ERC-20 wherever reserved tokens go to Sticky holders.
+export async function stickyRecipientsProblem(state, chainIds, encodedOn, erc20Of) {
+  var rows = [], kinds = currentPayoutKinds(state);
   (state.stages || []).forEach(function (stage) {
-    reserved = reserved.concat(live(stage.reservedRecipients));
-    if (kinds && stage.payoutByKind) kinds.forEach(function (kind) { var payout = stage.payoutByKind[kind.key]; if (payout) payouts = payouts.concat(live(payout.recipients)); });
-    else payouts = payouts.concat(live(stage.payoutRecipients));
+    rows = rows.concat(stage.reservedRecipients || []);
+    if (kinds && stage.payoutByKind) kinds.forEach(function (kind) { var payout = stage.payoutByKind[kind.key]; if (payout) rows = rows.concat(payout.recipients || []); });
+    else rows = rows.concat(stage.payoutRecipients || []);
   });
-  var rows = reserved.concat(payouts);
-  if (!rows.length) return null;
-  for (var i = 0; i < rows.length; i++) { var issue = stickyRecipientIssue(rows[i]); if (issue) return issue; }
-  var chains = chainIds.map(function (id) { return { id: id, name: chainName(id) }; });
-  function splitsOf(recs) {
-    var out = {};
-    chainIds.forEach(function (id) { out[id] = recs.map(function (r) { return { hook: r.hookAddress, beneficiary: r.address.trim(), projectId: r.projectId || 0 }; }); });
-    return out;
-  }
-  return (await stickySplitsProblem(splitsOf(payouts), chains, false, clientFor))
-    || (await stickySplitsProblem(splitsOf(reserved), chains, !!erc20Of, clientFor, erc20Of));
+  rows = rows.filter(isStickyRecipient);
+  for (var i = 0; i < rows.length; i++) { if (rows[i].stickyError) return rows[i].stickyError; }
+  return stickyEncodedProblem(encodedOn, chainIds.map(function (id) { return { id: id, name: chainName(id) }; }), clientFor, erc20Of);
 }
 
 function recipientIssue(state) {
@@ -4762,8 +4753,6 @@ async function runDeploy(state, owner) {
     // Build every chain's launch call, then simulate each (eth_call) so any encoding/logic revert surfaces
     // BEFORE the user signs or pays anything.
     await resolveItemSplitProjects(state);
-    var stickyProblem = await stickyRecipientsProblem(state, state.chainIds);
-    if (stickyProblem) throw new Error(stickyProblem);
     var feeByChain = await fees;
     var safePlan = null;
     if (createsSafe(state)) {
@@ -4775,17 +4764,22 @@ async function runDeploy(state, owner) {
       knownRows.splice(2, 0, ['Multisig signers', safePlan.owners.join(', ')]);
     }
     plans = [];
+    var launchArgs = {};
     for (var i = 0; i < state.chainIds.length; i++) {
       var cid = state.chainIds[i];
       var plan = state.projectType === 'revnet'
         ? buildRevnetArgs(state, cid, owner, projectUri, salt, deployStart)
         : buildLaunchArgs(state, cid, owner, projectUri, salt, deployStart);
+      launchArgs[cid] = plan.args;
       if (!plan.address) throw new Error('No deployer address on ' + chainName(cid));
       if (plan.missingSuckers) push('Note: some chain pairs have no sucker deployer on ' + chainName(cid) + '; those links will be skipped.', 'err');
       plan.chainId = cid;
       plan.value = feeByChain[i];
       plans.push(safePlan ? withSafeCreation(plan, safePlan) : plan);
     }
+    // A Sticky recipient is checked in the calls themselves, the way the distributor checks it on each chain.
+    var stickyProblem = await stickyRecipientsProblem(state, state.chainIds, function (chainId) { return launchArgs[chainId]; });
+    if (stickyProblem) throw new Error(stickyProblem);
   } catch (e) {
     review.fail(friendlyDeployError(e));
     throw e;
