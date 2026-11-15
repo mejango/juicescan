@@ -270,6 +270,9 @@ describe('the shared .jb file on Juicescan', () => {
     state.stages[0].reservedRecipients[1] = Object.assign(state.stages[0].reservedRecipients[1], { projectId: 4000, stickyError: 'Maximum weeks can\'t be less than minimum weeks.', stickyWeeks: { tenure: true, min: '4', max: '2', hasMax: true } });
     expect(createDraftObject(state).stages[0].reserved[1].sticky).toEqual({ group: 'tenure', minWeeks: '4', maxWeeks: '2' });
     expect(() => roundTrip(state)).toThrow("Juicescan can't launch this file: it has a Sticky split whose weeks are not a group.");
+    // The same row in the slot that holds a per-chain address is still written as refused Sticky weeks.
+    state.stages[0].reservedRecipients[0] = Object.assign(state.stages[0].reservedRecipients[0], { projectId: 4000, stickyError: 'x', stickyWeeks: { tenure: true, min: '4', max: '2', hasMax: true } });
+    expect(createDraftObject(state).stages[0].reserved[0]).toMatchObject({ to: 'sticky', sticky: { group: 'tenure', minWeeks: '4', maxWeeks: '2' } });
   });
 
   it('refuses a file holding what this form cannot express, whole', () => {

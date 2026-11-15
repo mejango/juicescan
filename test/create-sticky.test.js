@@ -92,6 +92,9 @@ describe('Sticky launch checks', () => {
     expect(recipientIssue(stateWith('revnet', [sticky({ address: '' })]))).toMatch(/Sticky token/);
     expect(recipientIssue(stateWith('revnet', [sticky({ stickyError: 'Enter whole weeks' })]))).toMatch(/Enter whole weeks/);
   });
+  it('never encodes a row whose weeks were refused, whenever the encoder runs', () => {
+    expect(() => splitState(sticky({ projectId: 4052, stickyError: 'Enter whole weeks' }), 1, null, 1, null, false)).toThrow('A split to Sticky holders is not ready: Enter whole weeks');
+  });
   it('reads nothing when no row is Sticky', async () => {
     expect(await stickyRecipientsProblem(stateWith('project', [{ type: 'wallet', address: TOKEN, percent: 10 }]), [1], () => [])).toBe(null);
   });

@@ -5679,6 +5679,9 @@ function splitState(rec, rawPercent, beneficiaryOverride, chainId, projectIdOver
   // lockedUntil only encodes when the stage actually allows locks (splitLockAllowed at the call site) — a
   // stale value from a draft/import or a non-lockable (revnet/Flexible) stage must NOT reach the chain.
   // `allowLock === undefined` (e.g. a direct unit-test call) keeps the value, so existing behavior holds.
+  // Sticky week fields the form refused never encode: the row would otherwise be sent as its last valid group,
+  // also when the fields change after the pre-sign check.
+  if (isStickyRecipient(rec) && rec.stickyError) throw new Error('A split to Sticky holders is not ready: ' + rec.stickyError);
   var lockTs = (allowLock !== false && rec.lockedUntil) ? Number(rec.lockedUntil) : 0;
   // "Buyback liquidity" reserved split → routes to the shared JBP6FeeLPSplitHook (same address on every
   // chain). The hook keys off the distributing project, so projectId/beneficiary are pass-through.

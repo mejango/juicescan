@@ -79,6 +79,10 @@ export function toJbDraft(state, deps) {
     var stickyGroup = isStickyRecipient(row) && !Object.keys(chainMap(keys.address)).length && !Object.keys(chainMap(keys.projectId, num)).length
       ? decodeStickyGroupId(row.projectId || 0) : null;
     if (stickyGroup && (stickyGroup.kind === 'tenure' || !Number(row.projectId))) to = 'sticky';
+    // Week fields the form refused are written as typed whatever else the row holds, so the file is refused too,
+    // never read as the row's last valid group.
+    var refusedWeeks = isStickyRecipient(row) && row.stickyError && row.stickyWeeks ? row.stickyWeeks : null;
+    if (refusedWeeks) to = 'sticky';
     var out = emptyJbDraftSplit(to);
     out.lockedUntil = lockOk ? Number(row.lockedUntil) || 0 : 0;
     if (amounts) { out.amount = num(row.amountEth); out.amountPerChain = chainMap(keys.amount, num); }
@@ -87,8 +91,11 @@ export function toJbDraft(state, deps) {
     if (to === 'fundMarket') return out;
     if (to === 'sticky') {
       out.address = text(row.address);
-      // Week fields the form refused are written as typed, so the file is refused too, never read as the last valid group.
-      if (row.stickyError && row.stickyWeeks) { out.sticky = { group: 'tenure', minWeeks: num(row.stickyWeeks.min), maxWeeks: row.stickyWeeks.hasMax ? num(row.stickyWeeks.max) || '0' : '' }; return out; }
+      if (refusedWeeks) {
+        out.addressPerChain = chainMap(keys.address);
+        out.sticky = { group: 'tenure', minWeeks: num(refusedWeeks.min), maxWeeks: refusedWeeks.hasMax ? num(refusedWeeks.max) || '0' : '' };
+        return out;
+      }
       out.sticky = stickyGroup.kind === 'tenure'
         ? { group: 'tenure', minWeeks: String(stickyGroup.minWeeks), maxWeeks: stickyGroup.maxWeeks ? String(stickyGroup.maxWeeks) : '' }
         : { group: 'all', minWeeks: '', maxWeeks: '' };

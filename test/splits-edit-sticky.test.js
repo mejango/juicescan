@@ -61,6 +61,10 @@ describe('Sticky in the split editor', () => {
     const out = await resolveSplitsEditByChain([sticky, project], CHAINS, 1, resolve);
     expect(out[8453].map((split) => split.projectId)).toEqual([4052n, 8000n]);
     expect(lookups).toEqual([4052]);
+    // A hook that is Sticky on one chain only: its other chain still gets the looked-up project.
+    const mixed = { hook: Object.assign((chainId) => (chainId === 1 ? DISTRIBUTOR : '0x00000000000000000000000000000000000000cc'), { _chainValue: true }), beneficiary: TOKEN, projectId: 4052n, percent: 1 };
+    const mixedOut = await resolveSplitsEditByChain([mixed], CHAINS, 1, resolve);
+    expect(mixedOut[8453][0]).toMatchObject({ projectId: 8000n, hook: '0x00000000000000000000000000000000000000cc' });
   });
 
   it('refuses a maximum that is switched on but zero', () => {

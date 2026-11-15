@@ -26176,11 +26176,13 @@ export async function resolveSplitsEditByChain(splits, chains, sourceChainId, re
   sourceChainId = Number(sourceChainId);
   var remote = chains.some(function (chain) { return Number(chain.id) !== sourceChainId; });
   var projectMaps = {};
+  function stickyOn(split, chainId) { return isStickySplit({ hook: materializeChainValue(split.hook, chainId) }, chainId); }
   if (remote) {
     for (var i = 0; i < splits.length; i++) {
       var projectId = BigInt(splits[i].projectId);
       // A Sticky split's project id is its holders' group, the same on every chain, never a project to look up.
-      if (isStickySplit({ hook: materializeChainValue(splits[i].hook, sourceChainId) }, sourceChainId)) continue;
+      // The hook can differ by chain, so only a split that is Sticky on every other chain skips the lookup.
+      if (chains.every(function (chain) { return Number(chain.id) === sourceChainId || stickyOn(splits[i], chain.id); })) continue;
       if (projectId === 0n || projectMaps[projectId.toString()]) continue;
       if (projectId <= 0n || !Number.isSafeInteger(Number(projectId))) throw new Error('Could not verify recipient project #' + projectId + ' across chains.');
       var info = await resolveProject(Number(projectId), sourceChainId);
@@ -26197,7 +26199,7 @@ export async function resolveSplitsEditByChain(splits, chains, sourceChainId, re
     byChain[cid] = splits.map(function (split) {
       var out = Object.assign({}, split);
       var projectId = BigInt(split.projectId);
-      if (projectId > 0n && cid !== sourceChainId && !isStickySplit({ hook: materializeChainValue(split.hook, sourceChainId) }, sourceChainId)) {
+      if (projectId > 0n && cid !== sourceChainId && !stickyOn(split, cid)) {
         var localId = Number(projectMaps[projectId.toString()][cid]);
         if (!Number.isSafeInteger(localId) || localId <= 0) {
           throw new Error('Could not verify recipient project #' + projectId + ' on ' + (chain.name || chainNameOf(cid)) + '.');
