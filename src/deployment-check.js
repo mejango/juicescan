@@ -3,10 +3,11 @@
 // juicebox.money's "Check deployment": same check ids, statuses and sentences, so the two reports compare.
 // Reads are pinned to one block. Custom hooks and controllers are "unsupported" where a capability cannot be
 // verified, never a mismatch merely for differing from the canonical deployment.
-import { isAddress } from 'viem';
 import { contractReverted } from './encoding.js';
 import { getABI, getAddress } from './abi-registry.js';
 
+// A 0x address by shape; nothing is sent to it, it is only read about.
+function isAddress(value) { return /^0x[0-9a-fA-F]{40}$/.test(value); }
 var zeroAddress = '0x0000000000000000000000000000000000000000', zeroHash = '0x' + '0'.repeat(64);
 // Kept here, not imported from the NFT inventory reader: sharing that lazy module would split it into the startup set.
 function sameAddress(left, right) { return left.toLowerCase() === right.toLowerCase(); }
