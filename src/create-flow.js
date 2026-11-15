@@ -2554,12 +2554,14 @@ function appendRecipientPicker(toFieldNode, rec, render, opts) {
   // the ID field's left edge. When per-chain is expanded the single field is replaced by the per-chain rows.
   function projectIdCol() {
     var c = el('div', 'create-split-idcol');
-    var pcOpen = opts.state && opts.pidKey && perChainOpen(opts.state, opts.pidKey);
+    // A row on the Sticky distributor sends one group on every chain (splitState), so it offers no per-chain ids.
+    var oneGroup = isStickyRecipient(rec);
+    var pcOpen = !oneGroup && opts.state && opts.pidKey && perChainOpen(opts.state, opts.pidKey);
     if (!pcOpen) {
       var projectInput = projectIdField();
       c.appendChild(recipBoxWith(projectInput, attachProjectIdResolver(projectInput, opts.state && opts.state.chainIds || [])));
     }
-    if (opts.state && opts.pidKey) c.appendChild(perChainNumControl(opts.state, render, opts.pidKey, rec.projectId || ''));
+    if (!oneGroup && opts.state && opts.pidKey) c.appendChild(perChainNumControl(opts.state, render, opts.pidKey, rec.projectId || ''));
     return c;
   }
   // Token beneficiary input + its per-chain override. When per-chain is expanded the single field is replaced.
@@ -2607,7 +2609,12 @@ function appendRecipientPicker(toFieldNode, rec, render, opts) {
     // A custom split hook (address) that can also carry a project id + beneficiary, all per-chain settable.
     var customHookFields = function () {
       var hookInput = el('input', 'field create-split-recip'); hookInput.type = 'text'; hookInput.placeholder = '0x… (split hook address)'; hookInput.value = rec.hookAddress || '';
-      hookInput.addEventListener('input', function () { rec.hookAddress = hookInput.value.trim(); }); sub(hookInput);
+      hookInput.addEventListener('input', function () {
+        var wasSticky = isStickyRecipient(rec);
+        rec.hookAddress = hookInput.value.trim();
+        if (wasSticky !== isStickyRecipient(rec)) render(); // the fields a distributor row offers differ
+      });
+      sub(hookInput);
       var projRow = el('div', 'create-split-pickerhead');
       var projLbl = el('span', 'create-split-sublabel'); projLbl.textContent = 'with project'; projRow.appendChild(projLbl);
       projRow.appendChild(projectIdCol()); col.appendChild(projRow);

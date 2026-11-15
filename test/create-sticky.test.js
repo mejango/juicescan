@@ -73,6 +73,19 @@ describe('Sticky in the recipient picker', () => {
     expect(reopened.querySelector('[aria-label="Maximum weeks"]')).toBe(null);
   });
 
+  it('offers no per-chain project ids on a distributor row left in Custom by per-chain addresses', () => {
+    const state = { chainIds: [1, 8453], perChain: {}, _pcOpen: { 'p:0:0': true, 'ppid:0:0': true } };
+    const keys = { state, isPayout: true, perChainKey: 'p:0:0', pidKey: 'ppid:0:0' };
+    const other = picker({ type: 'customhook', hookAddress: TOKEN, address: TOKEN, projectId: 4052 }, keys);
+    const fields = (host) => host.querySelectorAll('.create-split-idcol input').length;
+    expect(subSelect(other).value).toBe('custom');
+    const distributor = picker({ type: 'customhook', hookAddress: DISTRIBUTOR, address: TOKEN, projectId: 4052 }, keys);
+    expect(subSelect(distributor).value).toBe('custom');
+    // The other hook shows an id per chain; the distributor row shows the one group it sends.
+    expect(fields(other)).toBeGreaterThan(1);
+    expect(fields(distributor)).toBe(1);
+  });
+
   it('opens a stored Sticky split as Sticky, with its group', () => {
     const host = picker({ type: 'customhook', hookAddress: DISTRIBUTOR, address: TOKEN, projectId: 4052, percent: 10 }, { isPayout: true });
     expect(subSelect(host).value).toBe('sticky');
