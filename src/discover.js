@@ -5,6 +5,7 @@ import { assertScheduleFresh, assertOrderedRulesetReceipt } from './ruleset-sche
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { PERMISSION_IDS } from './permission-ids.js';
+import { STICKY_MAX_CRITERIA_WEEKS, checkStickyToken, decodeStickyGroupId, isStickySplit, stickyDistributorAddress, stickyGroupFromFields, stickyRecipientLabel, stickySplitsProblem } from './sticky.js';
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
 import { MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay } from './defifa.js';
 import { PAY_MAX_SLIPPAGE_BPS, decodePayFailure, payRetrySlippageBps } from './pay-failure.js';
@@ -3157,7 +3158,8 @@ function renderTierSaleRouting(project, shop, tier) {
     var shares = tierSaleShares(tier.splitPercent, splits || []);
     shares.rows.forEach(function (entry) {
       var split = entry.split;
-      var label = BigInt(split.projectId || 0) > 0n
+      var label = isStickySplit(split, project.chainId) ? stickyRecipientNode(split, project.chainId)
+        : BigInt(split.projectId || 0) > 0n
         ? 'Project #' + String(split.projectId)
         : addressLinkNode(split.hook && split.hook !== ZERO_ADDRESS ? split.hook : split.beneficiary, project.chainId);
       body.appendChild(row(label, formatBps(entry.bps)));
@@ -6959,11 +6961,29 @@ function splitRoutingKind(sp) {
   return 'owner';
 }
 
+// A Sticky split's recipient, "Sticky holders stuck 4 to 52 weeks → STICKY": the group from the split's projectId,
+// then the Sticky token (the split's beneficiary) by symbol once read. The full token address is the tooltip.
+var stickySymbolReads = {};
+function stickyRecipientNode(split, chainId) {
+  var node = el('span', 'split-sticky-recipient');
+  node.textContent = stickyRecipientLabel(split, '');
+  node.title = String(split.beneficiary || '');
+  var key = chainId + '|' + String(split.beneficiary).toLowerCase();
+  if (!stickySymbolReads[key]) {
+    stickySymbolReads[key] = clientFor(chainId).readContract({ address: split.beneficiary, abi: erc20SymbolAbi, functionName: 'symbol', args: [] })
+      .catch(function () { delete stickySymbolReads[key]; return ''; });
+  }
+  stickySymbolReads[key].then(function (symbol) { if (symbol) node.textContent = stickyRecipientLabel(split, symbol); });
+  return node;
+}
+
 // Render the "Account" cell for a single JBSplit. Precedence follows splitRoutingKind (hook →
 // project → beneficiary → owner fallback). Returns a fresh node.
 function splitAccountNode(sp, project, chainId, opts) {
   opts = opts || {};
   var node = el('span', 'splits-acct-inner');
+  // A Sticky split's projectId is a reward group and its beneficiary a token, so it is told apart first.
+  if (isStickySplit(sp, chainId)) { node.appendChild(stickyRecipientNode(sp, chainId)); return node; }
   var kind = splitRoutingKind(sp);
   if (kind === 'hook') {
     var label = el('span', 'split-hook-label'); label.textContent = 'Split hook'; label.title = 'Reserved tokens are forwarded to a split hook';
@@ -14616,6 +14636,7 @@ function sameTxRank(type) { var i = SAME_TX_ORDER.indexOf(type); return i === -1
 function activityRowPhrase(row, unit, distributed, fanOut) {
   if (distributed && row.type === 'reserved_split') {
     var amount = formatCompactTokenAmount(row.splitCount) + ' ' + unit;
+    if (isStickySplit({ hook: row.splitHook }, row.chainId)) return { text: amount + ' to ', sticky: { projectId: row.splitProjectId, beneficiary: row.account }, chainId: row.chainId };
     return row.splitProjectId ? amount + ' to project #' + row.splitProjectId : { text: amount + ' to ', address: row.account };
   }
   // A fan-out (several pays in one tx) names who got what: the swap's payee, or an issuing pay's beneficiary.
@@ -14650,7 +14671,8 @@ function decorateItemMintBullet(bullet, project, nft) {
 }
 function phraseText(phrase) {
   if (typeof phrase === 'string') return phrase;
-  return (phrase.lead ? shortAddr6(phrase.lead) : '') + phrase.text + (phrase.address ? shortAddr6(phrase.address) : '');
+  return (phrase.lead ? shortAddr6(phrase.lead) : '') + phrase.text + (phrase.address ? shortAddr6(phrase.address) : '')
+    + (phrase.sticky ? stickyRecipientLabel(phrase.sticky, '') : '');
 }
 
 // Collapse rows that belong to one transaction (on one chain) into a single line item:
@@ -14847,6 +14869,7 @@ export function renderActivityRow(row, project) {
       }
       if (lastIndex < text.length) bullet.appendChild(document.createTextNode(text.slice(lastIndex)));
       if (phrase.address) bullet.appendChild(addressNode(phrase.address));
+      if (phrase.sticky) bullet.appendChild(stickyRecipientNode(phrase.sticky, phrase.chainId));
       if (phrase.lead) bullet.insertBefore(addressNode(phrase.lead), bullet.firstChild);
       if (phrase.nft && project) decorateItemMintBullet(bullet, project, phrase.nft);
       bullets.appendChild(bullet);
@@ -14984,7 +15007,7 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
       type: 'reserved_split', direction: 'in', chainId: chainId,
       txHash: rsp.txHash || event.txHash, timestamp: Number(rsp.timestamp || event.timestamp),
       account: rsp.beneficiary || event.from, from: rsp.from || event.from,
-      splitCount: splitCount, splitProjectId: Number(rsp.splitProjectId) || 0,
+      splitCount: splitCount, splitProjectId: Number(rsp.splitProjectId) || 0, splitHook: rsp.hook || '',
       baseAmount: '', tokenAmount: '',
       action: 'received ' + formatCompactTokenAmount(splitCount) + ' ' + sym + (project.tokenAddress ? '' : ' credits') + ' from a reserved split',
       memo: '',
@@ -15939,9 +15962,41 @@ function renderProjectDraftExport(project) {
   return card;
 }
 
+var DEPLOYMENT_GROUP_QUERY = 'query($suckerGroupId: String!, $version: Int!, $limit: Int!) { '
+  + 'projects(where: { suckerGroupId: $suckerGroupId, version: $version }, limit: $limit) { items { chainId projectId } } }';
+// Read-only checks of a deployment's wiring and of the indexer's record for it (src/deployment-check.js, loaded on first use).
+function renderDeploymentCheckCard(project) {
+  var card = el('div', 'detail-card extras-card');
+  var title = el('div', 'detail-card-title'); title.textContent = 'Deployment'; card.appendChild(title);
+  var body = el('div', 'detail-card-body extras-body');
+  var intro = el('div', 'extras-payer-copy'); intro.textContent = 'Check this project’s deployment and data availability.'; body.appendChild(intro);
+  var status = el('div', 'operator-edit-status'); body.appendChild(status);
+  var actions = el('div', 'operator-edit-actions extras-actions');
+  var button = el('a', 'operator-cta'); button.href = '#'; button.textContent = 'Check deployment'; actions.appendChild(button);
+  body.appendChild(actions); card.appendChild(body);
+  button.addEventListener('click', function (event) {
+    event.preventDefault(); status.className = 'operator-edit-status'; status.textContent = '';
+    var chains = projectChainList(project);
+    import('./deployment-check.js').then(function (check) {
+      check.openDeploymentCheck({
+        el: el, openModal: openModal, copyText: copyText, clientFor: clientFor,
+        deployments: chains.map(function (chain) { return { chainId: Number(chain.id), projectId: Number(pidOn(project, chain.id)), name: chain.name || chainNameFor(chain.id) }; }),
+        selected: Math.max(0, chains.findIndex(function (chain) { return Number(chain.id) === Number(project.chainId); })),
+        loadRow: function (chainId, projectId) { return loadBendystrawProjectRow(chainId + ':' + projectId, { chainId: chainId, projectId: projectId }); },
+        groupMembers: function (suckerGroupId) {
+          return bendystrawQuery(DEPLOYMENT_GROUP_QUERY, { suckerGroupId: suckerGroupId, version: BENDYSTRAW_VERSION, limit: 50 })
+            .then(function (data) { return (data && data.projects && data.projects.items) || []; });
+        },
+      });
+    }, function () { status.className = 'operator-edit-status error'; status.textContent = CHUNK_FAILED_TEXT; });
+  });
+  return card;
+}
+
 export function renderExtrasSection(project) {
   var section = el('div', 'detail-section');
   section.appendChild(renderProjectDraftExport(project));
+  section.appendChild(renderDeploymentCheckCard(project));
   var card = el('div', 'detail-card extras-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Payer address'; card.appendChild(title);
 
@@ -22046,7 +22101,7 @@ export var BENDYSTRAW_ACTIVITY_ITEM_FIELDS = 'items { id chainId projectId times
   + 'mintTokensEvent { beneficiary beneficiaryTokenCount caller from txHash timestamp } '
   + 'sendPayoutsEvent { amount amountPaidOut amountPaidOutUsd token decimals tokenSymbol fee caller from txHash timestamp } '
   + 'sendReservedTokensToSplitsEvent { tokenCount from txHash timestamp } '
-  + 'sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId from txHash timestamp } '
+  + 'sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId hook from txHash timestamp } '
   + 'autoIssueEvent { beneficiary count stageId from txHash timestamp } '
   + 'borrowLoanEvent { borrowAmount collateral beneficiary token from txHash timestamp } '
   + 'repayLoanEvent { repayBorrowAmount collateralCountToReturn caller from txHash timestamp } '
@@ -24370,7 +24425,7 @@ function renderOwnersSplits(project, opts) {
 // One split-recipient row. The recipient is either a 0x address OR a project ID — when it's a project,
 // a second "token beneficiary" input appears (who receives that project's minted tokens). Pushes a record
 // into `rows`; record.parse() -> { projectId: bigint, beneficiary: address } (throws on bad input).
-function addSplitRecipientRow(rowsBox, rows, opts) {
+export function addSplitRecipientRow(rowsBox, rows, opts) {
   opts = opts || {};
   // Same shape as the create flow's split row: "Split [%] to [Address|Project|Hook ▾]", with the chosen
   // type's fields stacked beneath the dropdown in its column. All three field groups are built once and
@@ -24405,15 +24460,65 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
   var recipBox = el('div', 'splits-edit-recipbox'); recipBox.appendChild(recip); recipBox.appendChild(ensHint);
   var recipSub = sub(recipBox);
 
-  // Fund market / Custom — only for reserved-token splits, where the shared LP hook applies.
-  var fmSel = null;
-  if (opts.allowLpHook && opts.lpHookAddr) {
+  // Fund market / Sticky / Custom. Fund market is for reserved-token splits only, where the shared LP hook
+  // applies; Sticky wherever its distributor is deployed on every chain being edited.
+  var fmSel = null, hasLpChoice = !!(opts.allowLpHook && opts.lpHookAddr);
+  if (hasLpChoice || opts.allowSticky) {
     fmSel = el('select', 'field create-input create-split-subsel');
-    [['fundmarket', 'Fund market'], ['custom', 'Custom']].forEach(function (o) {
+    [hasLpChoice ? ['fundmarket', 'Fund market'] : null, opts.allowSticky ? ['sticky', 'Sticky'] : null, ['custom', 'Custom']].filter(Boolean).forEach(function (o) {
       var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; fmSel.appendChild(op);
     });
     head.appendChild(fmSel); // sits inline right of "Hook", like the create flow
   }
+  // Sticky: the token whose holders are paid, and which holders (everyone, or those stuck a number of weeks).
+  var stickyToken = el('input', 'splits-edit-addr'); stickyToken.type = 'text'; stickyToken.placeholder = '0x… (Sticky token)'; stickyToken.setAttribute('aria-label', 'Sticky token');
+  var stickyGroup = el('select', 'field create-input');
+  [['all', 'All holders'], ['tenure', 'Holders stuck at least']].forEach(function (o) {
+    var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; stickyGroup.appendChild(op);
+  });
+  var weeksInput = function (placeholder, label) {
+    var input = el('input', 'field create-split-idnum'); input.type = 'number'; input.min = '1'; input.max = String(STICKY_MAX_CRITERIA_WEEKS); input.step = '1';
+    input.placeholder = placeholder; input.setAttribute('aria-label', label); return input;
+  };
+  var stickyMin = weeksInput('4', 'Minimum weeks'), stickyMax = weeksInput('52', 'Maximum weeks');
+  var stickyMaxCheck = document.createElement('input'); stickyMaxCheck.type = 'checkbox';
+  var stickyMaxLabel = el('label', 'splits-edit-lockcheck'); stickyMaxLabel.appendChild(stickyMaxCheck);
+  var stickyMaxText = el('span', ''); stickyMaxText.textContent = 'Set max time'; stickyMaxLabel.appendChild(stickyMaxText);
+  var stickyTenure = el('div', 'create-split-pickerhead create-sticky-line');
+  var weeksWord = function () { var word = el('span', 'create-split-sublabel'); word.textContent = 'weeks'; return word; };
+  var stickyUpTo = el('div', 'create-split-pickerhead create-sticky-line'); var upToWord = el('span', 'create-split-sublabel'); upToWord.textContent = 'up to';
+  stickyUpTo.appendChild(upToWord); stickyUpTo.appendChild(stickyMax); stickyUpTo.appendChild(weeksWord());
+  stickyTenure.appendChild(stickyMin); stickyTenure.appendChild(weeksWord()); stickyTenure.appendChild(stickyMaxLabel);
+  var stickyHelp = el('div', 'splits-edit-hint splits-edit-hint--prose');
+  var stickyStatus = el('div', 'splits-edit-hint');
+  var stickyBox = el('div', 'splits-edit-recipbox');
+  [stickyToken, stickyGroup, stickyTenure, stickyUpTo, stickyHelp, stickyStatus].forEach(function (node) { stickyBox.appendChild(node); });
+  var stickySub = sub(stickyBox);
+  // The group the fields ask for; throws the reason they cannot.
+  function stickyGroupOf() {
+    return stickyGroupFromFields(stickyGroup.value === 'tenure', stickyMin.value, stickyMaxCheck.checked, stickyMax.value);
+  }
+  var stickyCheckSeq = 0;
+  function refreshSticky() {
+    var tenure = stickyGroup.value === 'tenure';
+    stickyTenure.style.display = tenure ? '' : 'none';
+    stickyUpTo.style.display = tenure && stickyMaxCheck.checked ? '' : 'none';
+    stickyHelp.textContent = tenure ? 'Counts stake held that long when each round starts, 1 to ' + STICKY_MAX_CRITERIA_WEEKS + ' weeks.' : 'Pays every holder by voting power when each round starts.';
+    var token = (stickyToken.value || '').trim(), seq = ++stickyCheckSeq;
+    stickyStatus.className = 'splits-edit-hint';
+    if (!isAddr(token)) { stickyStatus.textContent = ''; return; }
+    var group;
+    try { group = stickyGroupOf(); } catch (error) { stickyStatus.className = 'splits-edit-hint warn'; stickyStatus.textContent = errMessage(error); return; }
+    stickyStatus.textContent = 'Checking the Sticky token…';
+    var cid = opts.chainId || 1;
+    checkStickyToken(clientFor(cid), cid, token, chainNameOf(cid)).then(function (result) {
+      if (seq !== stickyCheckSeq) return;
+      if (!result.ok) { stickyStatus.className = 'splits-edit-hint warn'; stickyStatus.textContent = result.reason; return; }
+      stickyStatus.textContent = stickyRecipientLabel({ projectId: group, beneficiary: token }, result.symbol);
+    }).catch(function () { if (seq === stickyCheckSeq) { stickyStatus.className = 'splits-edit-hint warn'; stickyStatus.textContent = 'Could not check the Sticky token.'; } });
+  }
+  [stickyToken, stickyMin, stickyMax].forEach(function (input) { input.addEventListener('input', function () { refreshSticky(); if (opts.onChange) opts.onChange(); }); });
+  [stickyGroup, stickyMaxCheck].forEach(function (input) { input.addEventListener('change', function () { refreshSticky(); if (opts.onChange) opts.onChange(); }); });
   // "with project" — the project a custom hook acts for (create-flow label + placement).
   var hookPidRow = el('div', 'create-split-pickerhead');
   var hookPidLabel = el('span', 'create-split-sublabel'); hookPidLabel.textContent = 'with project';
@@ -24509,9 +24614,13 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
   }
 
   function isFundMarket() { return rec.type === 'hook' && fmSel && fmSel.value === 'fundmarket'; }
+  function isSticky() { return rec.type === 'hook' && !!fmSel && fmSel.value === 'sticky'; }
   function refresh() {
     var t = rec.type;
-    var hookCustom = t === 'hook' && !isFundMarket();
+    var hookCustom = t === 'hook' && !isFundMarket() && !isSticky();
+    stickySub.style.display = isSticky() ? '' : 'none';
+    rec.sticky = isSticky();
+    if (rec.sticky) refreshSticky();
     // Park the shared ID field where this type wants it: inline for Project, under "with project" for Hook.
     if (t === 'project') { if (pidBox.parentNode !== head) head.appendChild(pidBox); }
     else if (hookCustom) { if (pidBox.parentNode !== hookPidRow) hookPidRow.appendChild(pidBox); }
@@ -24549,16 +24658,17 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
     if (!fmSel) return;
     var otherFundsMarket = rows.some(function (r) { return r !== rec && r.lpHook; });
     var fmOpt = fmSel.options[0];
+    if (fmOpt.value !== 'fundmarket') return;
     fmOpt.disabled = otherFundsMarket && !rec.lpHook;
     if (fmOpt.disabled && fmSel.value === 'fundmarket') { fmSel.value = 'custom'; rec.lpHook = false; }
   }
 
   var rec = {
     pct: pct, leadEl: lead, orig: (opts.prefill && opts.prefill.orig) || null,
-    type: 'address', lpHook: false, _lockTs: 0, _lockedRow: false, fixedShare: null,
+    type: 'address', lpHook: false, sticky: false, _lockTs: 0, _lockedRow: false, fixedShare: null,
     isEmpty: function () {
       if (rec.lpHook) return false;
-      var main = rec.type === 'project' ? (pid.value || '').trim() : (recip.value || '').trim();
+      var main = rec.sticky ? (stickyToken.value || '').trim() : rec.type === 'project' ? (pid.value || '').trim() : (recip.value || '').trim();
       return !main && !(pct.value || '').trim();
     },
     recipOpen: function () { return !rec.lpHook && rec.type === 'address' && !(recip.value || '').trim(); },
@@ -24566,12 +24676,19 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
     lockedUntilValue: function () { return rec._lockTs || 0; },
     hookAddr: function () {
       if (rec.lpHook) return chainValue(function (cid) { return (opts.lpHookAddrForChain && opts.lpHookAddrForChain(cid)) || opts.lpHookAddr || ZERO_ADDRESS; });
+      if (rec.sticky) return chainValue(function (cid) { return stickyDistributorAddress(cid) || ZERO_ADDRESS; });
       if (rec.type === 'hook') return recipPerChain.snapshot();
       return ZERO_ADDRESS;
     },
     parse: function () {
       // Fund market: the hook keys off the distributing project; projectId/beneficiary are pass-through.
       if (rec.lpHook) return { projectId: 0n, beneficiary: opts.ownerAddr || getAccount() || ZERO_ADDRESS };
+      // Sticky: the split's projectId is the holders' group and its beneficiary the Sticky token.
+      if (rec.sticky) {
+        var stickyAddress = (stickyToken.value || '').trim();
+        if (!isAddr(stickyAddress)) throw new Error('Enter the Sticky token’s 0x address');
+        return { projectId: stickyGroupOf(), beneficiary: stickyAddress, preferAddToBalance: false };
+      }
       if (rec.type === 'hook') {
         recipientValueOf(); // validates the hook address (throws with a clear message)
         var hp = (pid.value || '').trim();
@@ -24595,8 +24712,9 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
     // Switching type must not carry the old type's identity across — a wallet address left in the field
     // would silently become a hook address (or vice-versa).
     recip.value = ''; pid.value = ''; benef.value = ''; ensAddr = null;
+    stickyToken.value = ''; stickyGroup.value = 'all'; stickyMin.value = ''; stickyMax.value = ''; stickyMaxCheck.checked = false;
     recipPerChain.reset && recipPerChain.reset(); benefPerChain.reset && benefPerChain.reset();
-    if (fmSel) fmSel.value = opts.allowLpHook ? 'fundmarket' : 'custom';
+    if (fmSel) fmSel.value = hasLpChoice ? 'fundmarket' : 'custom';
     refresh();
     if (opts.onChange) opts.onChange();
   });
@@ -24616,6 +24734,15 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
     if (isLp) {
       rec.type = 'hook'; typeSel.value = 'hook';
       if (fmSel) fmSel.value = 'fundmarket';
+    } else if (hookAddr && opts.allowSticky && isStickySplit(pf.orig, opts.chainId || 1)) {
+      // An invalid stored group loads as "All holders", where the distributor routes it.
+      rec.type = 'hook'; typeSel.value = 'hook'; fmSel.value = 'sticky';
+      stickyToken.value = pf.beneficiary || '';
+      var storedGroup = decodeStickyGroupId(pf.projectId || 0);
+      if (storedGroup.kind === 'tenure') {
+        stickyGroup.value = 'tenure'; stickyMin.value = String(storedGroup.minWeeks);
+        if (storedGroup.maxWeeks) { stickyMaxCheck.checked = true; stickyMax.value = String(storedGroup.maxWeeks); }
+      }
     } else if (hookAddr) {
       rec.type = 'hook'; typeSel.value = 'hook';
       if (fmSel) fmSel.value = 'custom';
@@ -25643,6 +25770,11 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   var newShopSalt = newShop ? newShopDeploymentSalt(state, usesOmnichainWrapper) : ('0x' + '0'.repeat(64));
   var projUri = project.metadataUri || project.uri || '';
   if (newShop) { setStatus('Pinning new shop items…', 'pending'); await createFlow.pinShopItemsMetadata(state); await createFlow.resolveItemSplitProjects(state, selected[0].id); }
+  // A Sticky recipient is checked on every chain it is queued on, the check the distributor itself runs.
+  var stickyQueueProblem = await createFlow.stickyRecipientsProblem(state, selected.map(function (chain) { return chain.id; }),
+    function (cid) { return createFlow.buildQueueRulesetConfigs(state, cid, 0); },
+    function (cid) { return read(cid, 'JBTokens', tokenOfAbi, 'tokenOf', [pidOn(project, cid)]); });
+  if (stickyQueueProblem) throw new Error(stickyQueueProblem);
 
   // Route through JBOmnichainDeployer only when the LIVE ruleset already uses it as its data-hook wrapper.
   // Multi-chain revnets use REVOwner, so they must queue directly through each JBController; routing them through
@@ -25956,6 +26088,7 @@ function openEditSplitsModal(project, opts) {
     projectId: Number(pidOn(project, editChain)),
     chainId: editChain,
     chains: allChains,
+    allowSticky: allChains.every(function (chain) { return !!stickyDistributorAddress(chain.id); }),
     // Split locks only mean something inside a fixed-duration ruleset (create-flow rule: a Flexible
     // ruleset's owner could immediately queue new splits anyway). The duration is the VERIFIED ruleset's
     // on the edited chain — project.ruleset belongs to the home chain and can differ.
@@ -26075,9 +26208,13 @@ export async function resolveSplitsEditByChain(splits, chains, sourceChainId, re
   sourceChainId = Number(sourceChainId);
   var remote = chains.some(function (chain) { return Number(chain.id) !== sourceChainId; });
   var projectMaps = {};
+  function stickyOn(split, chainId) { return isStickySplit({ hook: materializeChainValue(split.hook, chainId) }, chainId); }
   if (remote) {
     for (var i = 0; i < splits.length; i++) {
       var projectId = BigInt(splits[i].projectId);
+      // A Sticky split's project id is its holders' group, the same on every chain, never a project to look up.
+      // The hook can differ by chain, so only a split that is Sticky on every other chain skips the lookup.
+      if (chains.every(function (chain) { return Number(chain.id) === sourceChainId || stickyOn(splits[i], chain.id); })) continue;
       if (projectId === 0n || projectMaps[projectId.toString()]) continue;
       if (projectId <= 0n || !Number.isSafeInteger(Number(projectId))) throw new Error('Could not verify recipient project #' + projectId + ' across chains.');
       var info = await resolveProject(Number(projectId), sourceChainId);
@@ -26094,7 +26231,7 @@ export async function resolveSplitsEditByChain(splits, chains, sourceChainId, re
     byChain[cid] = splits.map(function (split) {
       var out = Object.assign({}, split);
       var projectId = BigInt(split.projectId);
-      if (projectId > 0n && cid !== sourceChainId) {
+      if (projectId > 0n && cid !== sourceChainId && !stickyOn(split, cid)) {
         var localId = Number(projectMaps[projectId.toString()][cid]);
         if (!Number.isSafeInteger(localId) || localId <= 0) {
           throw new Error('Could not verify recipient project #' + projectId + ' on ' + (chain.name || chainNameOf(cid)) + '.');
@@ -26120,6 +26257,11 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
 
   setStatus('Verifying recipient projects across chains…', 'pending');
   var splitsByChain = await resolveSplitsEditByChain(splits, selectedChains, sourceChainId || project.chainId);
+  // A Sticky recipient is checked on every chain it goes to, the check the distributor itself runs.
+  var stickyProblem = await stickySplitsProblem(splitsByChain, selectedChains.map(function (chain) { return { id: chain.id, name: chain.name || chainNameOf(chain.id) }; }),
+    splitGroupId === RESERVED_TOKEN_SPLIT_GROUP, clientFor,
+    function (cid) { return read(cid, 'JBTokens', tokenOfAbi, 'tokenOf', [pidOn(project, cid)]); });
+  if (stickyProblem) { setStatus(stickyProblem, 'error'); return; }
 
   // Each chain can have a different current ruleset ID and token-keyed payout group. Re-read the exact source
   // split set before replacing it: a stale/failed prefill must never turn into an accidental clear.

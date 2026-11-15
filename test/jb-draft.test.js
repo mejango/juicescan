@@ -242,6 +242,46 @@ describe('the shared .jb file on Juicescan', () => {
     expect(() => buildLaunchArgs(state, 1, ALICE, 'ipfs://x', SALT, 2000000000)).toThrow('0.0000015 has more decimal places than its token holds.');
   });
 
+  it('carries a Sticky split as the distributor hook, its token and its group', () => {
+    const DISTRIBUTOR = '0x489d011dc34983eb2e219a5010806caa418cb46b';
+    const state = revnetState();
+    // The fixture gives the first reserved slot a per-chain address, and a slot that differs by chain is never Sticky.
+    state.stages[0].reservedRecipients = [
+      wallet({ type: 'customhook', hookAddress: DISTRIBUTOR, address: TOKEN, projectId: 0, percent: 1 }),
+      wallet({ type: 'customhook', hookAddress: DISTRIBUTOR, address: TOKEN, projectId: 4052, percent: 10 }),
+      wallet({ type: 'customhook', hookAddress: DISTRIBUTOR, address: TOKEN, projectId: 0, percent: 5 }),
+      // A group the distributor would reroute is not a Sticky row: it stays the hook row it is.
+      wallet({ type: 'customhook', hookAddress: DISTRIBUTOR, address: TOKEN, projectId: 52004, percent: 5 }),
+    ];
+    const rows = createDraftObject(state).stages[0].reserved;
+    expect(rows[0].to).toBe('hook');
+    expect(rows.slice(1).map((row) => [row.to, row.address, row.hook, row.projectId, row.sticky])).toEqual([
+      ['sticky', TOKEN, '', '', { group: 'tenure', minWeeks: '4', maxWeeks: '52' }],
+      ['sticky', TOKEN, '', '', { group: 'all', minWeeks: '', maxWeeks: '' }],
+      ['hook', TOKEN, DISTRIBUTOR, '52004', null],
+    ]);
+    const back = roundTrip(state);
+    expect(back.stages[0].reservedRecipients.slice(1).map((row) => [row.type, row.hookAddress, row.address, row.projectId])).toEqual([
+      ['customhook', DISTRIBUTOR, TOKEN, 4052], ['customhook', DISTRIBUTOR, TOKEN, 0], ['customhook', DISTRIBUTOR, TOKEN, 52004],
+    ]);
+    expect(launchOf(back)).toBe(launchOf(state));
+    expect(launchOf(state)).toContain(DISTRIBUTOR);
+    // A per-chain project id left in a Sticky slot is neither launched nor written, and a file holding one is refused.
+    pcAddrSet(state, 8453, 'rpid:0:1', 8000);
+    expect(launchOf(state)).not.toContain('8000');
+    expect(createDraftObject(state).stages[0].reserved[1]).toMatchObject({ to: 'sticky', projectIdPerChain: {} });
+    const withIds = createDraftObject(state);
+    Object.assign(withIds.stages[0].reserved[3], { projectIdPerChain: { 8453: '8000' } });
+    expect(() => parseCreateDraftJson(JSON.stringify(withIds))).toThrow("Juicescan can't launch this file: it has a Sticky split whose group differs by chain.");
+    // Weeks the form refused are written as typed, so the file is refused, never read as the last valid group.
+    state.stages[0].reservedRecipients[1] = Object.assign(state.stages[0].reservedRecipients[1], { projectId: 4000, stickyError: 'Maximum weeks can\'t be less than minimum weeks.', stickyWeeks: { tenure: true, min: '4', max: '2', hasMax: true } });
+    expect(createDraftObject(state).stages[0].reserved[1].sticky).toEqual({ group: 'tenure', minWeeks: '4', maxWeeks: '2' });
+    expect(() => roundTrip(state)).toThrow("Juicescan can't launch this file: it has a Sticky split whose weeks are not a group.");
+    // The same row in the slot that holds a per-chain address is still written as refused Sticky weeks.
+    state.stages[0].reservedRecipients[0] = Object.assign(state.stages[0].reservedRecipients[0], { projectId: 4000, stickyError: 'x', stickyWeeks: { tenure: true, min: '4', max: '2', hasMax: true } });
+    expect(createDraftObject(state).stages[0].reserved[0]).toMatchObject({ to: 'sticky', sticky: { group: 'tenure', minWeeks: '4', maxWeeks: '2' } });
+  });
+
   it('refuses a file holding what this form cannot express, whole', () => {
     const cant = (what) => "Juicescan can't launch this file: it has " + what + '.';
     const project = (patch, stagePatch) => {
@@ -256,7 +296,8 @@ describe('the shared .jb file on Juicescan', () => {
     expect(project({ chains: [1, 84532] })).toThrow(cant('mainnets and testnets together'));
     expect(project({ linkChains: false })).toThrow(cant('chains that are not linked'));
     expect(project({ ownerPerChain: { 1: BOB } })).toThrow(cant('a value for a chain it does not launch on'));
-    expect(project({}, { reserved: [row({ to: 'sticky', sticky: { group: 'all', minWeeks: '', maxWeeks: '' } })] })).toThrow(cant('a Sticky split'));
+    expect(project({}, { payouts: [{ token: 'eth', mode: 'all', currency: 'eth', splits: [row({ to: 'sticky', sticky: { group: 'tenure', minWeeks: '52', maxWeeks: '4' } })] }] }))
+      .toThrow(cant('a Sticky split whose weeks are not a group'));
     expect(project({}, { duration: 0, reserved: [row({ lockedUntil: 2200000000 })], payouts: [{ token: 'eth', mode: 'none', currency: 'eth', splits: [] }] }))
       .toThrow(cant('a locked split in a stage with no cycle'));
     expect(project({}, { duration: 4294967295 })).toThrow(cant('an approval rule on a stage that never ends'));

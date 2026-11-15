@@ -28,7 +28,8 @@ import {
 } from './launch-component.js';
 import { pinFile, pinJson, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { getAuditPrompt } from './prompts.js';
-import { mountIssuancePriceChart } from './discover.js';
+import { clientFor, mountIssuancePriceChart } from './discover.js';
+import { STICKY_MAX_CRITERIA_WEEKS, STICKY_NEW_PROJECT_RESERVED, decodeStickyGroupId, isStickyRecipient, stickyDistributorAddress, stickyEncodedProblem, stickyGroupFromFields, stickyRecipientIssue, stickyRecipientLabel } from './sticky.js';
 import { CREATE_BATCH_ABI, MAX_SAFE_SIGNERS, MIN_SAFE_SIGNERS, bundleSafeLaunch, resolveSafePlan, safePolicyIssue, safeSignerAddress, verifySafe, verifySafeSimulation } from './safe-create.js';
 import { clearLaunchCalls, launchCallsFor, loadLaunchCalls, provesLaunch, saveLaunchCalls, unfinishedLaunchOutcome } from './launch-retry.js';
 import { relayrForwarderState, relayrSignedProofOf, decodeForwardedRequest, buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession, restoreUnsentRelayrPayment, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession } from './relayr.js';
@@ -2001,6 +2002,7 @@ function autoIssuanceRow(stage, ai, idx, tk, render, state, stageIdx) {
 }
 
 function recipLabel(rec) {
+  if (isStickyRecipient(rec)) return stickyRecipientLabel({ projectId: rec.projectId || 0, beneficiary: rec.address });
   if (rec.type === 'project' && rec.projectId) return 'project #' + rec.projectId;
   if (rec.address) return shortAddr(rec.address);
   return 'owner';
@@ -2535,6 +2537,7 @@ function appendRecipientPicker(toFieldNode, rec, render, opts) {
   typeSel.addEventListener('change', function () {
     clearPerChain();
     rec.type = typeSel.value === 'address' ? 'wallet' : typeSel.value === 'project' ? 'project' : hookDefault;
+    delete rec.stickyWeeks; delete rec.stickyError;
     render();
   });
   head.appendChild(typeSel);
@@ -2551,12 +2554,14 @@ function appendRecipientPicker(toFieldNode, rec, render, opts) {
   // the ID field's left edge. When per-chain is expanded the single field is replaced by the per-chain rows.
   function projectIdCol() {
     var c = el('div', 'create-split-idcol');
-    var pcOpen = opts.state && opts.pidKey && perChainOpen(opts.state, opts.pidKey);
+    // A row on the Sticky distributor sends one group on every chain (splitState), so it offers no per-chain ids.
+    var oneGroup = isStickyRecipient(rec);
+    var pcOpen = !oneGroup && opts.state && opts.pidKey && perChainOpen(opts.state, opts.pidKey);
     if (!pcOpen) {
       var projectInput = projectIdField();
       c.appendChild(recipBoxWith(projectInput, attachProjectIdResolver(projectInput, opts.state && opts.state.chainIds || [])));
     }
-    if (opts.state && opts.pidKey) c.appendChild(perChainNumControl(opts.state, render, opts.pidKey, rec.projectId || ''));
+    if (!oneGroup && opts.state && opts.pidKey) c.appendChild(perChainNumControl(opts.state, render, opts.pidKey, rec.projectId || ''));
     return c;
   }
   // Token beneficiary input + its per-chain override. When per-chain is expanded the single field is replaced.
@@ -2604,28 +2609,47 @@ function appendRecipientPicker(toFieldNode, rec, render, opts) {
     // A custom split hook (address) that can also carry a project id + beneficiary, all per-chain settable.
     var customHookFields = function () {
       var hookInput = el('input', 'field create-split-recip'); hookInput.type = 'text'; hookInput.placeholder = '0x… (split hook address)'; hookInput.value = rec.hookAddress || '';
-      hookInput.addEventListener('input', function () { rec.hookAddress = hookInput.value.trim(); }); sub(hookInput);
+      hookInput.addEventListener('input', function () {
+        var wasSticky = isStickyRecipient(rec);
+        rec.hookAddress = hookInput.value.trim();
+        if (wasSticky !== isStickyRecipient(rec)) render(); // the fields a distributor row offers differ
+      });
+      sub(hookInput);
       var projRow = el('div', 'create-split-pickerhead');
       var projLbl = el('span', 'create-split-sublabel'); projLbl.textContent = 'with project'; projRow.appendChild(projLbl);
       projRow.appendChild(projectIdCol()); col.appendChild(projRow);
       var benLbl = el('div', 'create-split-sublabel'); benLbl.textContent = 'and beneficiary'; col.appendChild(benLbl);
       beneficiaryField();
     };
-    if (opts.allowFundMarket) {
+    // Payout splits have no Fund market: there the hook is Sticky or a custom one.
+    if (!opts.allowFundMarket && rec.type === 'lphook') rec.type = 'customhook';
+    // Sticky pays a Sticky token's holders: one token and one group on every chain. A slot holding per-chain
+    // addresses stays a custom hook; per-chain project ids never apply to a row on the distributor (splitState).
+    var chainIds = (opts.state && opts.state.chainIds) || [];
+    var stickyOffered = chainIds.length > 0 && chainIds.every(function (cid) { return !!stickyDistributorAddress(cid); });
+    var slotPerChain = !!opts.state && !!opts.perChainKey && perChainOpen(opts.state, opts.perChainKey);
+    var sticky = stickyOffered && isStickyRecipient(rec) && !slotPerChain;
+    var hookKind = rec.type === 'lphook' ? 'fundmarket' : sticky ? 'sticky' : 'custom';
+    var hookKinds = [opts.allowFundMarket ? ['fundmarket', 'Fund market'] : null, stickyOffered ? ['sticky', 'Sticky'] : null, ['custom', 'Custom']].filter(Boolean);
+    if (hookKinds.length > 1) {
       var hookSel = el('select', 'field create-input create-split-subsel');
-      [['fundmarket', 'Fund market'], ['custom', 'Custom']].forEach(function (o) {
-        var op = el('option'); op.value = o[0]; op.textContent = o[1]; if ((rec.type === 'customhook' ? 'custom' : 'fundmarket') === o[0]) op.selected = true; hookSel.appendChild(op);
+      hookKinds.forEach(function (o) {
+        var op = el('option'); op.value = o[0]; op.textContent = o[1]; if (hookKind === o[0]) op.selected = true; hookSel.appendChild(op);
       });
-      hookSel.addEventListener('change', function () { clearPerChain(); rec.type = hookSel.value === 'custom' ? 'customhook' : 'lphook'; render(); });
-      head.appendChild(hookSel); col.appendChild(head); // Fund market / Custom sits inline to the right of "Hook"
-      if (rec.type === 'customhook') customHookFields();
-      else { var lpHint = el('div', 'create-split-lphint'); lpHint.textContent = 'Pools split tokens into a Uniswap V4 buyback position. Trading fees route back to your project.'; col.appendChild(lpHint); }
-    } else {
-      // Payout splits: custom hook only (no Fund market). No sub-selector — the dropdown is just "Hook".
-      if (rec.type === 'lphook') rec.type = 'customhook';
-      col.appendChild(head);
-      customHookFields();
+      hookSel.addEventListener('change', function () {
+        clearPerChain();
+        // Entering or leaving Sticky starts the row clean: its address and project id mean something else there.
+        if (hookSel.value === 'sticky' || sticky) { rec.address = ''; rec.projectId = 0; rec.hookAddress = ''; delete rec.stickyWeeks; delete rec.stickyError; }
+        rec.type = hookSel.value === 'fundmarket' ? 'lphook' : 'customhook';
+        if (hookSel.value === 'sticky') rec.hookAddress = stickyDistributorAddress(chainIds[0]);
+        render();
+      });
+      head.appendChild(hookSel); // sits inline to the right of "Hook"
     }
+    col.appendChild(head);
+    if (hookKind === 'fundmarket') { var lpHint = el('div', 'create-split-lphint'); lpHint.textContent = 'Pools split tokens into a Uniswap V4 buyback position. Trading fees route back to your project.'; col.appendChild(lpHint); }
+    else if (hookKind === 'sticky') stickyFields(col, sub, rec, render);
+    else customHookFields();
   } else { // wallet (address)
     col.appendChild(head);
     if (!(opts.state && opts.perChainKey && perChainOpen(opts.state, opts.perChainKey))) {
@@ -2636,6 +2660,56 @@ function appendRecipientPicker(toFieldNode, rec, render, opts) {
     if (opts.state && opts.perChainKey) col.appendChild(perChainAddrControl(opts.state, render, opts.perChainKey, pickResolved(rec.address, rec)));
   }
   toFieldNode.appendChild(col);
+}
+// A Sticky row's fields: the Sticky token, then which of its holders are paid. They write the row's address and
+// project id (the group), the two values the distributor reads.
+function stickyFields(col, sub, rec, render) {
+  var token = el('input', 'field create-split-recip'); token.type = 'text'; token.placeholder = '0x… (Sticky token)'; token.value = rec.address || '';
+  token.setAttribute('aria-label', 'Sticky token');
+  token.addEventListener('input', function () { rec.address = token.value.trim(); });
+  sub(token);
+  // The week fields as typed, kept while they do not make a group, so a refused entry is never sent as another.
+  var stored = decodeStickyGroupId(rec.projectId || 0);
+  function groupOf(fields) { return Number(stickyGroupFromFields(fields.tenure, fields.min, fields.hasMax, fields.max)); }
+  // Fields typed earlier are shown only while they still say what the row holds (or are still refused).
+  var typed = rec.stickyWeeks;
+  if (typed && !rec.stickyError) { try { if (groupOf(typed) !== (Number(rec.projectId) || 0)) typed = null; } catch (error) { typed = null; } }
+  var weeks = typed || (stored.kind === 'tenure'
+    ? { tenure: true, min: String(stored.minWeeks), max: stored.maxWeeks ? String(stored.maxWeeks) : '', hasMax: !!stored.maxWeeks }
+    : { tenure: false, min: '', max: '', hasMax: false });
+  function apply() {
+    rec.stickyWeeks = weeks; rec.stickyError = '';
+    try { rec.projectId = groupOf(weeks); } catch (error) { rec.stickyError = error.message; }
+    problem.textContent = rec.stickyError || '';
+  }
+  var group = el('select', 'field create-input create-split-subsel');
+  [['all', 'All holders'], ['tenure', 'Holders stuck at least']].forEach(function (o) {
+    var op = el('option'); op.value = o[0]; op.textContent = o[1]; if ((weeks.tenure ? 'tenure' : 'all') === o[0]) op.selected = true; group.appendChild(op);
+  });
+  group.setAttribute('aria-label', 'Sticky holders');
+  group.addEventListener('change', function () { weeks.tenure = group.value === 'tenure'; apply(); render(); });
+  sub(group);
+  var problem = el('div', 'create-hint warn');
+  function weeksField(key, placeholder, label) {
+    var input = el('input', 'field create-split-idnum'); input.type = 'number'; input.min = '1'; input.max = String(STICKY_MAX_CRITERIA_WEEKS); input.step = '1';
+    input.placeholder = placeholder; input.value = weeks[key]; input.setAttribute('aria-label', label);
+    input.addEventListener('input', function () { weeks[key] = input.value; apply(); });
+    return input;
+  }
+  function word(text) { var node = el('span', 'create-split-sublabel'); node.textContent = text; return node; }
+  // One short line per part, so nothing runs past a narrow dialog.
+  function line(nodes) { var row = el('div', 'create-split-pickerhead create-sticky-line'); nodes.forEach(function (node) { row.appendChild(node); }); col.appendChild(row); }
+  if (weeks.tenure) {
+    var maxLabel = el('label', 'create-split-sublabel'), maxCheck = el('input'); maxCheck.type = 'checkbox'; maxCheck.checked = weeks.hasMax;
+    maxCheck.addEventListener('change', function () { weeks.hasMax = maxCheck.checked; apply(); render(); });
+    maxLabel.appendChild(maxCheck); maxLabel.appendChild(document.createTextNode(' Set max time'));
+    line([weeksField('min', '4', 'Minimum weeks'), word('weeks'), maxLabel]);
+    if (weeks.hasMax) line([word('up to'), weeksField('max', '52', 'Maximum weeks'), word('weeks')]);
+  }
+  var help = el('div', 'create-split-lphint');
+  help.textContent = weeks.tenure ? 'Counts stake held that long when each round starts, 1 to ' + STICKY_MAX_CRITERIA_WEEKS + ' weeks.' : 'Pays every holder by voting power when each round starts.';
+  col.appendChild(help);
+  problem.textContent = rec.stickyError || ''; col.appendChild(problem);
 }
 // Whether the per-chain control for `key` is expanded (explicitly opened, or has any stored override).
 function perChainOpen(state, key, chains) {
@@ -3674,6 +3748,22 @@ function splitTotalIssue(state) {
 
 // Walk every split / payout / auto-issuance recipient with a non-zero value; return a one-line description
 // of the first that has no valid destination (so funds/tokens would be sent to 0x0), or null if all are fine.
+// Why the form's Sticky recipients cannot be sent on `chainIds`, or null. The rows must be complete, and every
+// Sticky split in what is about to be signed (encodedOn(chainId): that chain's call arguments, per-chain values
+// included) must name a valid group and a registered Sticky token on its chain. erc20Of(chainId), given for a
+// live project, also requires the project's ERC-20 wherever reserved tokens go to Sticky holders.
+export async function stickyRecipientsProblem(state, chainIds, encodedOn, erc20Of) {
+  var rows = [], kinds = currentPayoutKinds(state);
+  (state.stages || []).forEach(function (stage) {
+    rows = rows.concat(stage.reservedRecipients || []);
+    if (kinds && stage.payoutByKind) kinds.forEach(function (kind) { var payout = stage.payoutByKind[kind.key]; if (payout) rows = rows.concat(payout.recipients || []); });
+    else rows = rows.concat(stage.payoutRecipients || []);
+  });
+  rows = rows.filter(isStickyRecipient);
+  for (var i = 0; i < rows.length; i++) { if (rows[i].stickyError) return rows[i].stickyError; }
+  return stickyEncodedProblem(encodedOn, chainIds.map(function (id) { return { id: id, name: chainName(id) }; }), clientFor, erc20Of);
+}
+
 function recipientIssue(state) {
   var stages = state.stages || [];
   function badSplit(recips, kindLabel, isPayout) {
@@ -3689,6 +3779,11 @@ function recipientIssue(state) {
         }
       }
       else if (r.type === 'lphook') { /* fund-market hook needs no address */ }
+      else if (isStickyRecipient(r)) {
+        if (!isPayout && state.projectType !== 'revnet') return STICKY_NEW_PROJECT_RESERVED;
+        var stickyIssue = stickyRecipientIssue(r);
+        if (stickyIssue) return 'a ' + kindLabel + ' to Sticky holders is not ready: ' + stickyIssue;
+      }
       else if (r.type === 'customhook') { if (!isAddr(r.hookAddress)) return 'a ' + kindLabel + ' uses a custom hook with no valid hook address.'; }
       else if (!isAddr(resolvedStr(pickResolved(r.address, r)))) return 'a ' + kindLabel + ' has no valid recipient address.';
     }
@@ -3846,7 +3941,7 @@ function perChainPayoutRowControl(state, render, rec, keys, defaults) {
     wrap.appendChild(link);
     return wrap;
   }
-  var wantsPid = rec.type === 'project' || rec.type === 'customhook';
+  var wantsPid = rec.type === 'project' || (rec.type === 'customhook' && !isStickyRecipient(rec));
   var wantsAddr = rec.type === 'wallet' || !(rec.preferAddToBalance && rec.type === 'project');
   state.chainIds.forEach(function (cid) {
     var rowc = el('div', 'create-pcaddr-row');
@@ -4676,17 +4771,22 @@ async function runDeploy(state, owner) {
       knownRows.splice(2, 0, ['Multisig signers', safePlan.owners.join(', ')]);
     }
     plans = [];
+    var launchArgs = {};
     for (var i = 0; i < state.chainIds.length; i++) {
       var cid = state.chainIds[i];
       var plan = state.projectType === 'revnet'
         ? buildRevnetArgs(state, cid, owner, projectUri, salt, deployStart)
         : buildLaunchArgs(state, cid, owner, projectUri, salt, deployStart);
+      launchArgs[cid] = plan.args;
       if (!plan.address) throw new Error('No deployer address on ' + chainName(cid));
       if (plan.missingSuckers) push('Note: some chain pairs have no sucker deployer on ' + chainName(cid) + '; those links will be skipped.', 'err');
       plan.chainId = cid;
       plan.value = feeByChain[i];
       plans.push(safePlan ? withSafeCreation(plan, safePlan) : plan);
     }
+    // A Sticky recipient is checked in the calls themselves, the way the distributor checks it on each chain.
+    var stickyProblem = await stickyRecipientsProblem(state, state.chainIds, function (chainId) { return launchArgs[chainId]; });
+    if (stickyProblem) throw new Error(stickyProblem);
   } catch (e) {
     review.fail(friendlyDeployError(e));
     throw e;
@@ -5586,6 +5686,9 @@ function splitState(rec, rawPercent, beneficiaryOverride, chainId, projectIdOver
   // lockedUntil only encodes when the stage actually allows locks (splitLockAllowed at the call site) — a
   // stale value from a draft/import or a non-lockable (revnet/Flexible) stage must NOT reach the chain.
   // `allowLock === undefined` (e.g. a direct unit-test call) keeps the value, so existing behavior holds.
+  // Sticky week fields the form refused never encode: the row would otherwise be sent as its last valid group,
+  // also when the fields change after the pre-sign check.
+  if (isStickyRecipient(rec) && rec.stickyError) throw new Error('A split to Sticky holders is not ready: ' + rec.stickyError);
   var lockTs = (allowLock !== false && rec.lockedUntil) ? Number(rec.lockedUntil) : 0;
   // "Buyback liquidity" reserved split → routes to the shared JBP6FeeLPSplitHook (same address on every
   // chain). The hook keys off the distributing project, so projectId/beneficiary are pass-through.
@@ -5605,6 +5708,9 @@ function splitState(rec, rawPercent, beneficiaryOverride, chainId, projectIdOver
   // The address-bearing field is the wallet recipient OR the project / custom-hook token beneficiary.
   var addr = (beneficiaryOverride != null) ? beneficiaryOverride : pickResolved(rec.address, rec); // resolve ENS → 0x
   // Project and custom-hook splits can target a project id (per-chain override → default).
+  // A Sticky row's project id is its holders' group, one value on every chain: a per-chain id left in its slot
+  // (the form shows none for it) never replaces the group the row displays.
+  if (isStickyRecipient(rec)) projectIdOverride = null;
   var pid = (rec.type === 'project' || rec.type === 'customhook')
     ? (projectIdOverride != null ? projectIdOverride : (Number(rec.projectId) || 0)) : 0;
   // Custom split hook → user-supplied hook contract (carries the projectId + beneficiary above to the hook).
@@ -6095,7 +6201,7 @@ export const __test = {
   deploySalt, storeUnit, splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,
   recomputeCustomDuration, durationIssue,
   verifyLaunchFeedCoverage, launchBaseCurrencies, revnetBaseCurrencyId,
-  lpHookIssue, deadlinePresetIssue, itemSplits, mergeDraft, noticeClashIssue, stageStarts, stepsFor,
+  lpHookIssue, deadlinePresetIssue, appendRecipientPicker, itemSplits, mergeDraft, noticeClashIssue, stageStarts, stepsFor,
   surplusTokenLabel, itemCashOutOn, anyTokenCashOut, buildMetadata, storeCategoryName, itemDraft, renderRevnetStages,
   // Hand-written ABI fragments, exposed so the ABI-parity suite can diff them against data/abis/*.json.
   revDeployAbi, revDeploy721Abi, deployer721Abi, omnichainAbi, omnichain721Abi,

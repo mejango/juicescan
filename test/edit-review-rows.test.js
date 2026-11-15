@@ -61,6 +61,12 @@ describe('the splits review', () => {
     ]);
   });
 
+  it('names a Sticky recipient by its holders and token', () => {
+    var rows = splitChangeRows({ chainName: 'Base', projectId: 9, rulesetId: 1n, previous: [],
+      next: [split(A, 100000000n, { projectId: 4052n, hook: '0x489d011dc34983eb2e219a5010806caa418cb46b' })] });
+    expect(rows[2]).toEqual(['Base, New recipients', 'Sticky holders stuck 4 to 52 weeks → Sticky token ' + A + ' 10%']);
+  });
+
   it('says None for an empty set', () => {
     var rows = splitChangeRows({ chainName: 'Base', projectId: 9, rulesetId: 1n, previous: [split(A, 1000000000n)], next: [] });
     expect(rows[2][1]).toBe('None');

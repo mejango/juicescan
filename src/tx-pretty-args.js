@@ -9,6 +9,7 @@
 import { decodeFunctionData, encodeFunctionData } from 'viem';
 import { getABI } from './abi-registry.js';
 import { PERMISSION_IDS } from './permission-ids.js';
+import { describeStickySplit, isStickySplit } from './sticky.js';
 
 var ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 /** JBConstants.SPLITS_TOTAL_PERCENT — a split group's whole is 1e9. */
@@ -208,12 +209,13 @@ export function describeSplitGroups(value) {
       var hooked = typeof split.hook === 'string' && split.hook.toLowerCase() !== ZERO_ADDR;
       // A hook with no project and no beneficiary is the split's only recipient.
       var hookOnly = hooked && split.projectId === 0n && split.beneficiary.toLowerCase() === ZERO_ADDR;
-      var parts = [
+      var sticky = hooked && isStickySplit(split);
+      var parts = sticky ? [describeStickySplit(split.projectId) + ' → Sticky token ' + split.beneficiary, 'via StickyDistributor ' + split.hook] : [
         split.projectId !== 0n
           ? 'project #' + split.projectId + ' (beneficiary ' + split.beneficiary + ')'
           : hookOnly ? 'hook ' + split.hook : split.beneficiary,
       ];
-      if (hooked && !hookOnly) parts.push('via hook ' + split.hook);
+      if (hooked && !hookOnly && !sticky) parts.push('via hook ' + split.hook);
       if (split.preferAddToBalance === true) parts.push('prefers add-to-balance');
       if (typeof split.lockedUntil === 'number' && split.lockedUntil > 0) {
         parts.push('locked until ' + new Date(split.lockedUntil * 1000).toLocaleString());
