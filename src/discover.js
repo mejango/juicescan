@@ -20868,7 +20868,7 @@ export function renderPriceChart(project, stages) {
   // indexed floor history from Bendystraw's sucker group moments. The pool is read once for the price and the
   // history; a failed read is an unknown pool, not a missing one.
   var poolRead = readPoolState(project, project.chainId, { strict: true });
-  var drawnSwaps = null; // the swap history on the chart, with the indexer row counts it was read at
+  var drawnSwaps = null; // the last swap history read, with the indexer row counts it was read at
   var poolOrNone = poolRead.catch(function () { return null; });
   Promise.all([
     poolOrNone.then(poolAmmPrice),
@@ -20880,6 +20880,8 @@ export function renderPriceChart(project, stages) {
   ]).then(function (res) {
     var p = res[0], f = res[1], history = res[2] || [];
     var swaps = res[3] || { series: [], buyVolume: 0, sellVolume: 0, count: 0, pair: null, reserves: [] };
+    // As the indexer returned it: a refresh that finds no new rows draws this again.
+    drawnSwaps = res[3] || null;
     var lp = res[4];
     var basePerAcct = res[5];
     // Re-checked, not reused: `unitMismatch` above is captured while `project.acctToken` may still
@@ -20943,7 +20945,6 @@ export function renderPriceChart(project, stages) {
       ammHistory = swaps.series.slice();
     }
     poolReserves = swaps.reserves || [];
-    drawnSwaps = swaps;
     if (p && p > 0) {
       amm = p;
       ammHistory.push({ timestamp: now, value: p });

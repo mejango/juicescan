@@ -17,7 +17,7 @@ jango's rule: a page loads what it needs once, then refreshes about every 30 sec
 ## Review
 - Startup grew 1,094 B gzip (740,086 to 741,180), over the 741,000 ceiling; the ceiling is now 742,100 in its own commit, for jango to accept or reject.
 - Not covered by a unit test: the one line in `showTab` that dispatches `jb:tab-shown` (the resume itself is tested in `test/live-poll.test.js`).
-- Seen, not changed: the price refresh draws pool values without the base-currency conversion the first load applies when the issuance currency differs from the accounting token.
+- Seen, not changed, not verified in a browser: the price refresh appears to draw pool values without the base-currency conversion the first load applies when the issuance currency differs from the accounting token.
 
 ## Plan refinement
 - **Objective:** Juicescan asks the indexer, the Safe service and RPC less often or not twice, per the ten audited findings, with no change to what a user is shown before signing. Success is each finding done with a test that fails without it, or skipped with a stated reason.
