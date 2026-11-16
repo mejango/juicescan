@@ -117,7 +117,8 @@ const totalGzip = (await Promise.all(distributionFiles.map(gzipOf))).reduce((sum
 // The two-sided market: its builders, the market mode of the add form and the market editor: measured 2,160,828 B gzip.
 // Sticky recipients (labels, the editor option, launch checks, .jb rows) and claiming a market's fees: measured 2,166,166 B gzip.
 // The deployment check (a lazy port of the SDK's checker, with its dialog): measured 2,173,201 B gzip.
-const totalGzipBudget = 2_174_000;
+// The wallet balance gate in the position and market editors: measured 2,174,171 B gzip.
+const totalGzipBudget = 2_176_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);
