@@ -21058,7 +21058,7 @@ function renderPriceChart(project, stages) {
   function onPriceVisibilityChange() {
     if (document.visibilityState === 'visible') refreshLivePrice();
   }
-  priceRefreshTimer = window.setInterval(refreshLivePrice, 15000);
+  priceRefreshTimer = window.setInterval(refreshLivePrice, 30000);
   document.addEventListener('visibilitychange', onPriceVisibilityChange);
   return card;
 }

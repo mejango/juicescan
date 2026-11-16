@@ -98,6 +98,10 @@ export function renderSafeBatchTray(project) {
         var link = tx.safeTxHash && authority ? safeTxLink(source.chain.id, authority, tx.safeTxHash) : null;
         if (link) { var a = el('a'); a.href = link; a.target = '_blank'; a.rel = 'noreferrer'; a.textContent = 'Open in Safe ↗'; note.appendChild(a); }
         note.appendChild(button('safe-batch-remove-proposed', 'Remove from the batch', function () { clearTray(source.chain.id, pidOn(project, source.chain.id)); }));
+        // The review offers the Safe's nonces: one queued too late is proposed again earlier.
+        note.appendChild(button('safe-batch-remove-proposed safe-batch-requeue', 'Propose at another nonce', function () {
+          openBatchDialog(project, source.chain, setStatus).catch(function (e) { setStatus(errMessage(e, 'Could not open the batch.'), 'error'); });
+        }));
         foot.appendChild(note);
       } else {
         var review = button('operator-cta safe-batch-review', 'Review and propose on ' + chainName(source.chain), function () {
