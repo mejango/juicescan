@@ -2,17 +2,22 @@
 
 jango's rule: a page loads what it needs once, then refreshes about every 30 seconds or on a distinct user action; faster polling only for a short window right after the user sends a transaction. Bendystraw allows 100 requests per minute per IP. No read that protects money or correctness is removed or weakened. Branch `perf/lean-network`, not pushed, for review.
 
-- [ ] 1 Activity card: 30 s poll; a tick sends one probe and reloads (activity, ruleset rows, pending payments) only when it changed; sucker map kept per project for the session; post-transaction fast path unchanged.
-- [ ] 2 Live price: no timer without a pool; pool key and slot0 read once per tick; indexed history re-read only when the indexer's row counts changed.
-- [ ] 3 Indexer failures: a 429 without Retry-After waits 5 s and is retried once; a failed poll tick doubles the interval (capped, reset on success).
-- [ ] 4 Safe queue: in-flight dedupe for `listPendingSafeTxs`; dialog-open and propose-time reads stay fresh.
-- [ ] 5 Bridge leaves persisted with `src/cache.js`, validated by the outbox count, still verified against the emitted root.
-- [ ] 6 Empty bridge table: retry only when a read threw.
-- [ ] 7 Held writes: 30 s, skipped while hidden, unsettled rows not re-read automatically (Check stays).
-- [ ] 8 `waitForSafeExecution`: 4 s for the first minute, then 30 s.
-- [ ] 9 Safe queue page: repeat a host only after a 5xx or a network error.
-- [ ] 10 Live refresh resumes when a cached tab is shown again (verify the bug first).
-- [ ] Full `npx vitest run`, `npm run check:source`, commits per finding, report.
+- [x] 1 Activity card: 30 s poll; a tick sends one probe and reloads (activity, ruleset rows, pending payments) only when it changed; sucker map kept per project for the session; post-transaction fast path unchanged. `test/activity-poll.test.js`.
+- [x] 2 Live price: no timer without a pool; pool key and slot0 read once per refresh; indexed history paged again only when the indexer's row counts changed (full paging kept, no incremental merge). `test/price-refresh.test.js`.
+- [x] 3 Indexer failures: a 429 without Retry-After waits 5 s and is retried once (`test/bendystraw-batching.test.js`); a failed poll tick doubles the interval, capped at 4 minutes, reset on success (`test/live-poll.test.js`).
+- [x] 4 Safe queue: in-flight dedupe for `listPendingSafeTxs`; nothing kept after it settles, so dialog-open and propose-time reads stay fresh. `test/safe-runtime.test.js`.
+- [x] 5 Bridge leaves over an hour old persisted with `src/cache.js` (`src/bridge-leaves.js`), validated by the outbox count, still verified against the emitted root, dropped on a mismatch. `test/bridge-leaves.test.js`.
+- [x] 6 Empty bridge table: retry only when a read threw. `test/bridge-movements-listener.test.js`.
+- [x] 7 Held writes: 30 s, skipped while hidden, focus refresh at most once per 30 s, an unsettled row re-read for ten minutes and then only by Check, which reads again before offering a release. `test/held-writes-polling.test.js`.
+- [x] 8 `waitForSafeExecution`: 4 s for the first minute, then 30 s. `test/safe-app.test.js`.
+- [x] 9 Safe queue page: a host is repeated only after a 5xx or a network error; the legacy host is still tried. `test/safe-runtime.test.js`.
+- [x] 10 Real: the price timer and, on phones, the activity loop stopped for good once their tab was switched away. Both use `src/live-poll.js` and resume on `jb:tab-shown`, which `showTab` dispatches.
+- [x] Full `npx vitest run`, `npm run check:source`, `schema:check`, `transaction:check`, `check:bundle`; commits per finding.
+
+## Review
+- Startup grew 1,094 B gzip (740,086 to 741,180), over the 741,000 ceiling; the ceiling is now 742,100 in its own commit, for jango to accept or reject.
+- Not covered by a unit test: the one line in `showTab` that dispatches `jb:tab-shown` (the resume itself is tested in `test/live-poll.test.js`).
+- Seen, not changed: the price refresh draws pool values without the base-currency conversion the first load applies when the issuance currency differs from the accounting token.
 
 ## Plan refinement
 - **Objective:** Juicescan asks the indexer, the Safe service and RPC less often or not twice, per the ten audited findings, with no change to what a user is shown before signing. Success is each finding done with a test that fails without it, or skipped with a stated reason.
