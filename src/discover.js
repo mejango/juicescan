@@ -18,6 +18,7 @@ import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './t
 import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
 import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
+import { bridgeLeavesFor, keepBridgeLeaves, dropBridgeLeaves } from './bridge-leaves.js';
 import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive, bestPayRoute } from './pay-preview.js';
 import { PAY_QUOTE_FAILED_MESSAGE, V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from './pay-prepare.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
@@ -23116,7 +23117,6 @@ async function fetchRulesetQueueRows(project) {
 // root + executed bitmap. So we read it all from chain in one consistent pass.) Per sucker: enumerate the
 // outbound InsertToOutboxTree leaves, then derive per-leaf status from the source outbox (sent?) and the
 // destination inbox (delivered? claimed?). Claimable rows carry a locally-verified merkle proof.
-var BRIDGE_LEAF_CACHE = {};
 async function fetchBridgeTransactions(project) {
   var chains = (project.chains || []).map(function (c) { return c.id; });
   var rows = [];
@@ -23168,9 +23168,9 @@ async function fetchBridgeTransactions(project) {
         };
         var W = RPC_LOG_WINDOW, cursor = latest;
         var cacheKey = C + ':' + srcSucker.toLowerCase() + ':' + TOKEN.toLowerCase();
-        var cachedLeaves = BRIDGE_LEAF_CACHE[cacheKey];
-        var byIndex = cachedLeaves && cachedLeaves.count <= count ? Object.assign({}, cachedLeaves.byIndex) : {};
-        var blockOf = cachedLeaves && cachedLeaves.count <= count ? Object.assign({}, cachedLeaves.blockOf) : {};
+        var cachedLeaves = bridgeLeavesFor(cacheKey, count);
+        var byIndex = cachedLeaves ? Object.assign({}, cachedLeaves.byIndex) : {};
+        var blockOf = cachedLeaves ? Object.assign({}, cachedLeaves.blockOf) : {};
         while (Object.keys(byIndex).length < count && cursor >= 0n) {
           var windows = [];
           for (var n = 0; n < 4 && cursor >= 0n; n++) {
@@ -23194,6 +23194,7 @@ async function fetchBridgeTransactions(project) {
         }
         var latestProof = suckerLeafProof(leafHashes, count - 1);
         if (suckerBranchRoot(leafHashes[count - 1], latestProof, count - 1).toLowerCase() !== String(byIndex[count - 1].root).toLowerCase()) {
+          dropBridgeLeaves(cacheKey);
           throw new Error('The reconstructed bridge outbox does not match its latest emitted root.');
         }
 
@@ -23204,7 +23205,7 @@ async function fetchBridgeTransactions(project) {
           if ((byIndex[key].root || '').toLowerCase() === inboxRoot.toLowerCase()) deliveredCount = Number(key) + 1;
         });
 
-        var ts = cachedLeaves && cachedLeaves.count <= count ? Object.assign({}, cachedLeaves.ts || {}) : {};
+        var ts = cachedLeaves ? Object.assign({}, cachedLeaves.ts || {}) : {};
         var timestamps = await Promise.all(Object.keys(blockOf).filter(function (key) { return ts[key] == null; }).map(async function (key) {
           var block;
           try { block = await logClient.getBlock({ blockNumber: blockOf[key] }); }
@@ -23212,7 +23213,7 @@ async function fetchBridgeTransactions(project) {
           return [key, Number(block.timestamp)];
         }));
         timestamps.forEach(function (entry) { ts[entry[0]] = entry[1]; });
-        BRIDGE_LEAF_CACHE[cacheKey] = { count: count, byIndex: byIndex, blockOf: blockOf, ts: ts };
+        keepBridgeLeaves(cacheKey, { count: count, byIndex: byIndex, blockOf: blockOf, ts: ts });
         var executedRows = await Promise.all(Array.from({ length: count }, async function (_, index) {
           var hash = await clientFor(R).readContract({ address: peerSucker, abi: suckerClaimAbi, functionName: 'executedLeafHashOf', args: [RTOKEN, BigInt(index)] });
           return !!(hash && !/^0x0+$/.test(hash));
