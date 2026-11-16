@@ -69,6 +69,8 @@ describe('tray', () => {
     expect(tray.querySelector('.safe-batch-proposed').textContent).toContain('Already proposed on Base as Safe transaction #10 (1/2 signatures)');
     expect(tray.querySelector('.safe-batch-proposed a').href).toContain('multisig_');
     expect(buttons(tray)).not.toContain('Review and propose on Base');
+    // Queued at the wrong nonce: the review, with its nonce choice, stays one click away.
+    expect(buttons(tray)).toContain('Propose at another nonce');
     tray.querySelector('.safe-batch-remove-proposed').click();
     expect(loadTray(8453, 6)).toEqual([]);
     expect(tray.querySelector('.safe-batch-tray-empty').textContent).toMatch(/Nothing queued/);
