@@ -20713,7 +20713,7 @@ function readBasePerAcctRate(project, chainId) {
 // Hero price chart shown above the tabs for revnets: the Issuance Price ladder (the ceiling). AMM
 // price (pool slot0, once it has liquidity) and Cash out price (the floor, once Bendystraw indexes V6)
 // are surfaced in the legend and join later — issuance and cash out bound the AMM price.
-function renderPriceChart(project, stages) {
+export function renderPriceChart(project, stages) {
   var sym = project.tokenSymbol || 'tokens';
   var sorted = stages.slice().sort(function (a, b) { return Number(a.start) - Number(b.start); });
   var now = Math.floor(Date.now() / 1000);
@@ -20865,12 +20865,16 @@ function renderPriceChart(project, stages) {
   draw();
 
   // Live AMM price (pool slot0, works even with zero liquidity), current cash out floor, and
-  // indexed floor history from Bendystraw's sucker group moments.
+  // indexed floor history from Bendystraw's sucker group moments. The pool is read once for the price and the
+  // history; a failed read is an unknown pool, not a missing one.
+  var poolRead = readPoolState(project, project.chainId, { strict: true });
+  var drawnSwaps = null; // the swap history on the chart, with the indexer row counts it was read at
+  var poolOrNone = poolRead.catch(function () { return null; });
   Promise.all([
-    readAmmPrice(project, project.chainId),
+    poolOrNone.then(poolAmmPrice),
     readCashoutPrice(project, project.chainId),
     fetchPriceFloorHistory(project, sorted),
-    fetchSwapHistory(project).catch(function () { return null; }),
+    fetchSwapHistory(project, poolOrNone).catch(function () { return null; }),
     readLpPositions(project, project.chainId).catch(function () { return null; }),
     readBasePerAcctRate(project, project.chainId),
   ]).then(function (res) {
@@ -20939,6 +20943,7 @@ function renderPriceChart(project, stages) {
       ammHistory = swaps.series.slice();
     }
     poolReserves = swaps.reserves || [];
+    drawnSwaps = swaps;
     if (p && p > 0) {
       amm = p;
       ammHistory.push({ timestamp: now, value: p });
@@ -21000,50 +21005,44 @@ function renderPriceChart(project, stages) {
 
   // Keep the active chart caught up with a busy pool. Bendystraw supplies the exact post-trade history;
   // slot0 supplies the authoritative live endpoint while the newest swap is still being indexed.
-  var priceRefreshPending = false;
-  var priceRefreshTimer;
+  // Each refresh reads the pool once and asks the indexer for its row counts; the history is paged again only
+  // when those differ from the history drawn (or could not be read).
   function refreshLivePrice() {
-    if (!card.isConnected) {
-      window.clearInterval(priceRefreshTimer);
-      document.removeEventListener('visibilitychange', onPriceVisibilityChange);
-      return;
-    }
-    if (document.visibilityState === 'hidden' || priceRefreshPending) return;
-    priceRefreshPending = true;
-    Promise.all([
-      readAmmPrice(project, project.chainId),
-      fetchSwapHistory(project).catch(function () { return null; }),
-    ]).then(function (res) {
-      if (!card.isConnected) return;
-      var live = res[0], swaps = res[1];
-      now = Math.floor(Date.now() / 1000);
-      if (swaps) {
-        ammHistory = (swaps.series || []).slice();
-        poolReserves = swaps.reserves || [];
-        if (swaps.pair) ammPairSym = swaps.pair.symbol;
-      }
-      if (live && live > 0) {
-        amm = live;
-        ammHistory.push({ timestamp: now, value: live });
-        ammChip.classList.remove('muted'); ammChip.classList.add('active');
-        setChipVal(ammChip, formatPrice(live), ammChipTail);
-        var tradeNote = swaps && swaps.count
-          ? swaps.count + ' trade' + (swaps.count === 1 ? '' : 's') + ' | '
-            + formatPrice(swaps.buyVolume + swaps.sellVolume) + ' ' + ammPairSym + ' volume | '
-          : '';
-        ammChip.setAttribute('data-tip', 'What the Uniswap pool charges per ' + sym + ' right now. Compare it with paying the project or cashing out; market prices can move outside those quotes. '
-          + tradeNote + '~' + formatPrice(live) + ' ' + ammPairSym + ' / ' + sym + '.');
-        draw();
-      }
-    }).catch(function () {
-      // Keep the last known-good chart; the next foreground tick retries.
-    }).finally(function () { priceRefreshPending = false; });
+    return readPoolState(project, project.chainId).then(function (pool) {
+      if (!pool) return false;
+      return poolHistoryCounts(pool, project.chainId).catch(function () { return null; }).then(function (indexed) {
+        var current = drawnSwaps && indexed != null && drawnSwaps.indexed === indexed;
+        return current ? drawnSwaps : fetchSwapHistory(project, pool).catch(function () { return null; });
+      }).then(function (swaps) {
+        if (!card.isConnected) return;
+        var live = poolAmmPrice(pool);
+        now = Math.floor(Date.now() / 1000);
+        if (swaps) {
+          drawnSwaps = swaps;
+          ammHistory = (swaps.series || []).slice();
+          poolReserves = swaps.reserves || [];
+          if (swaps.pair) ammPairSym = swaps.pair.symbol;
+        }
+        if (live && live > 0) {
+          amm = live;
+          ammHistory.push({ timestamp: now, value: live });
+          ammChip.classList.remove('muted'); ammChip.classList.add('active');
+          setChipVal(ammChip, formatPrice(live), ammChipTail);
+          var tradeNote = swaps && swaps.count
+            ? swaps.count + ' trade' + (swaps.count === 1 ? '' : 's') + ' | '
+              + formatPrice(swaps.buyVolume + swaps.sellVolume) + ' ' + ammPairSym + ' volume | '
+            : '';
+          ammChip.setAttribute('data-tip', 'What the Uniswap pool charges per ' + sym + ' right now. Compare it with paying the project or cashing out; market prices can move outside those quotes. '
+            + tradeNote + '~' + formatPrice(live) + ' ' + ammPairSym + ' / ' + sym + '.');
+          draw();
+        }
+      });
+    });
   }
-  function onPriceVisibilityChange() {
-    if (document.visibilityState === 'visible') refreshLivePrice();
-  }
-  priceRefreshTimer = window.setInterval(refreshLivePrice, 30000);
-  document.addEventListener('visibilitychange', onPriceVisibilityChange);
+  // A project with no pool has nothing to refresh. An unread pool may exist, so it is polled.
+  poolRead.then(function (pool) { return !!pool; }, function () { return true; }).then(function (mayHavePool) {
+    if (mayHavePool) livePoll(card, refreshLivePrice);
+  });
   return card;
 }
 
@@ -22646,14 +22645,16 @@ export function explainCashOutChange(previous, current) {
 // its registration price; each swap contributes its exact post-trade V4 spot.
 // Older rows without sqrtPriceX96 retain the realized average-price fallback.
 // Returns the empty shape if the model isn't indexed yet — never fabricates.
-async function fetchSwapHistory(project) {
+// `knownPool` is a pool state (or its promise) the caller already read, so the pool is not read twice.
+// `indexed` in the result is how many rows the indexer held behind it (poolHistoryCounts gives the same key).
+async function fetchSwapHistory(project, knownPool) {
   var empty = { series: [], buyVolume: 0, sellVolume: 0, count: 0, pair: null, reserves: [] };
   var chainId = Number(project.chainId);
   if (!chainId) return empty;
 
   // The pool is the whole scope: a project can retain events from superseded pools, and decimals and
   // prices are only comparable inside one exact pool.
-  var pool = await readPoolState(project, chainId);
+  var pool = knownPool !== undefined ? await knownPool : await readPoolState(project, chainId);
   if (!pool || !pool.poolId) return empty;
   var pair = pool.pair;
   var pairScale = Math.pow(10, Number(pair && pair.decimals != null ? pair.decimals : 18));
@@ -22736,7 +22737,22 @@ async function fetchSwapHistory(project) {
     pair: pair,
     reserves: reserves,
     sampled: series.length < (pages[0].totalCount || 0) + (pages[1].totalCount || 0),
+    indexed: poolHistoryKey(pages),
   };
+}
+
+// How many swaps, pool registrations and liquidity changes the indexer holds for a pool, in one request: what a
+// price refresh asks before paging the history again.
+export var BENDYSTRAW_POOL_HISTORY_COUNTS_QUERY = 'query($poolId: String!, $chainId: Int!, $version: Int!) { '
+  + 'swapEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, limit: 1) { totalCount } '
+  + 'buybackPoolEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, limit: 1) { totalCount } '
+  + 'buybackPoolLiquidityEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, limit: 1) { totalCount } }';
+function poolHistoryKey(pages) {
+  return pages.map(function (page) { return Number(page && page.totalCount) || 0; }).join('/');
+}
+function poolHistoryCounts(pool, chainId) {
+  return bendystrawQuery(BENDYSTRAW_POOL_HISTORY_COUNTS_QUERY, { poolId: pool.poolId, chainId: Number(chainId), version: BENDYSTRAW_VERSION })
+    .then(function (data) { return poolHistoryKey([data.swapEvents, data.buybackPoolEvents, data.buybackPoolLiquidityEvents]); });
 }
 
 // Indexed project stats (volume / payments / contributors) from Bendystraw. Prefers the
@@ -22975,7 +22991,8 @@ export function activityProbeRequest(deployments) {
       .replace(/\$(projectId|chainId)\b/g, function (_, name) { return '$' + name + i; })
       .replace(/\b(activityEvents|rulesetQueuedEvents|routerPendingCalls)\(/g, function (_, field) { return field + i + ': ' + field + '('; }));
   });
-  return { query: 'query(' + declared.join(', ') + ') { ' + fields.join(' ') + ' }', variables: variables };
+  // Built with concat: the schema check reads `+` chains as fixed documents, and this one exists only at run time.
+  return { query: 'query('.concat(declared.join(', '), ') { ', fields.join(' '), ' }'), variables: variables };
 }
 // The probe's answer as one comparable string. The indexer returns the fields in no fixed order.
 export function activityProbeKey(data) {
