@@ -13,7 +13,8 @@ import { gzipSync } from 'node:zlib';
 // startup measures 736,158 B gzip.
 // Sticky recipients are named in split lists and the feed, which load with the project page: startup measures 739,059 B gzip.
 // The Extras card that opens the deployment check, and the shared code its lazy module splits out: startup measures 740,085 B gzip.
-const startupBudget = { raw: 3_930_000, gzip: 741_000 };
+// Polling less (the shared 30 s poll, the activity and pool-history probes, kept bridge leaves) loads with the project page: startup measures 741,180 B gzip.
+const startupBudget = { raw: 3_930_000, gzip: 742_100 };
 
 const budgets = {
   // Open-first states (pending review rows, busy buttons, stale-while-refreshing marks) measure 248,424 B raw, 50,173 B gzip.
