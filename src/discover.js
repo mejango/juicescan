@@ -4849,34 +4849,13 @@ function renderProjectContractWarnings(project) {
 
 // Current AMM price as PAIR-token per project token (ETH/token for ETH pools, USDC/token for USDC pools).
 async function readAmmPrice(project, chainId) {
-  var hook = await projectBuybackHook(project, chainId);
-  var pm = POOL_MANAGER_BY_CHAIN[chainId];
-  if (!hook || !pm) return null;
-  try {
-    var pair = await lpPairFor(project, chainId);
-    var client = clientFor(chainId);
-    // The buyback hook keys its pool by (projectId, terminalToken) — pass the project's actual pair token,
-    // not a hard-coded native 0x0, or a USDC pool is never found.
-    var key = await client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pidOn(project, chainId), pair.addr] });
-    if (!key) return null;
-    var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase();
-    var c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
-    if (c0 === ZERO_ADDRESS && c1 === ZERO_ADDRESS) return null; // pool not set
-    var poolId = uniswapV4PoolId(key);
-    var stateSlot = keccak256(encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [poolId, 6n])); // POOLS_SLOT = 6
-    var slot0 = await client.readContract({ address: pm, abi: extsloadAbi, functionName: 'extsload', args: [stateSlot] });
-    var sqrtP = BigInt(slot0) & ((1n << 160n) - 1n); // sqrtPriceX96 = lower 160 bits of slot0
-    if (sqrtP === 0n) return null;
-    var sp = Number(sqrtP) / Math.pow(2, 96);
-    var rawP = sp * sp; // raw currency1 per currency0 (base units)
-    // Convert raw → human pair-per-token. Project token is 18-dec; pair has pair.decimals.
-    // raw_pair/raw_token = pairIsC0 ? 1/rawP : rawP ; human = raw_ratio × 10^(18 − pairDec).
-    var pairIsC0 = (c0 === pair.addr);
-    var rawRatio = pairIsC0 ? (rawP > 0 ? 1 / rawP : null) : rawP;
-    if (rawRatio == null) return null;
-    var human = rawRatio * Math.pow(10, 18 - pair.decimals);
-    return (isFinite(human) && human > 0) ? human : null;
-  } catch (e) { return null; }
+  return poolAmmPrice(await readPoolState(project, chainId));
+}
+// The same price from a pool state already read (readPoolState), or null without one.
+function poolAmmPrice(pool) {
+  if (!pool) return null;
+  var projectTokenIsCurrency0 = (pool.key.currency0 || ZERO_ADDRESS).toLowerCase() !== pool.pair.addr;
+  return ammPriceFromSqrtPriceX96(pool.sqrtP, projectTokenIsCurrency0, pool.pair.decimals);
 }
 
 // ── Direct AMM sell (bypass the terminal cash out) ─────────────────────────────────────────────────
