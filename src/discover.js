@@ -27252,13 +27252,13 @@ function renderBridgeTransactions(project) {
   // While anything is still in flight (sent but not yet delivered/claimable), re-read onchain every 45s so
   // the row flips to "claimable" on its own once the destination inbox receives the root — no manual reload.
   var pollTimer = null;
-  function schedulePoll() {
+  function schedulePoll(failed) {
     if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
     if (!body.isConnected) return;
     var inFlight = rows.some(function (r) { return r.status === 'pending'; });
-    // Self-heal a transient empty scan: a flaky getLogs can return nothing even though movements exist, so
-    // retry a few times quickly when the table is empty before giving up.
-    var retryEmpty = rows.length === 0 && emptyRetries < 4;
+    // A scan that threw with nothing on screen is retried a few times quickly. A scan that returned is complete
+    // (it is checked against each outbox's leaf count), so an empty one is final.
+    var retryEmpty = !!failed && rows.length === 0 && emptyRetries < 4;
     if (!inFlight && !retryEmpty) return;
     if (rows.length === 0) emptyRetries++;
     pollTimer = setTimeout(function () { if (body.isConnected) load(); }, rows.length === 0 ? 8000 : 45000);
@@ -27287,7 +27287,7 @@ function renderBridgeTransactions(project) {
       if (seq !== loadSeq || !body.isConnected) return;
       // Don't wipe a populated table on a failed re-read — only show the error when we have nothing.
       if (!rows.length) { body.className = 'detail-card-body bridge-empty'; body.textContent = 'Could not load bridge transactions.'; }
-      schedulePoll();
+      schedulePoll(true);
     });
   }
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { renderBridgeTransactions } from '../src/discover.js';
 
 function projectCountingReads() {
@@ -24,6 +24,26 @@ describe('queued movements table', () => {
     document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
     await settle();
     expect(project.reads).toBe(initial + 1);
+  });
+
+  it('takes an empty scan as final and retries only a scan that threw', async () => {
+    vi.useFakeTimers();
+    try {
+      const empty = projectCountingReads();
+      document.body.appendChild(renderBridgeTransactions(empty));
+      await vi.advanceTimersByTimeAsync(0);
+      const once = empty.reads;
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(empty.reads).toBe(once);
+
+      const failing = { id: 7, reads: 0 };
+      Object.defineProperty(failing, 'chains', { get() { failing.reads += 1; throw new Error('RPC down'); } });
+      document.body.appendChild(renderBridgeTransactions(failing));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(failing.reads).toBe(1);
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(failing.reads).toBe(5);
+    } finally { vi.useRealTimers(); }
   });
 
   it('keeps refreshing after its tab is hidden and shown again', async () => {
