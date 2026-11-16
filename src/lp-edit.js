@@ -17,7 +17,7 @@ import { el, errMessage, openPendingReview } from './component-base.js';
 import {
   POSITION_MANAGER_BY_CHAIN, chainNameOf, formatBalance, formatPrice, formatTokens, lpApprovalRows, lpBandPricesOf, lpConfirmAndSend,
   lpGetAmountsForLiquidity, lpGetLiquidityForAmounts, lpMintPlan, lpPositionManagerAbi, lpSqrtAtTick,
-  lpSafeBatchPreview, lpWithAllowanceFlags, noteLocalLpWrite, openModal, refreshLpPositionForRemoval, runAddLiquidityTxs,
+  lpSafeBatchPreview, lpWithAllowanceFlags, noteLocalLpWrite, openModal, readWalletTokenBalance, refreshLpPositionForRemoval, runAddLiquidityTxs,
 } from './discover.js';
 import { quotedOutputFloor } from './slippage.js';
 
@@ -202,6 +202,29 @@ export function lpEditStillFits(plan, live) {
     ? 'The pool price moved beyond the reviewed range. Review fresh amounts.' : null;
 }
 
+// Why the wallet cannot fund a reviewed change, or null. Gated on what the pool pulls, not on the maxima, whose
+// 1% headroom is spent only if the price moves; a change that pays in its caps (paysCap) must hold them whole,
+// and native value is sent whole, headroom included. A side that pulls nothing is not read against a balance.
+// held: { token, pair } balances, null where a read failed.
+export function lpBalanceProblem(plan, paysCap, held, sym, pairSym) {
+  var tokenNeed = paysCap ? plan.tokenFunding : plan.tokenFlow, pairNeed = paysCap ? plan.pairFunding : plan.pairFlow;
+  if (plan.value > pairNeed) pairNeed = plan.value;
+  if ((tokenNeed > 0n && held.token === null) || (pairNeed > 0n && held.pair === null)) return 'Could not read your wallet balances.';
+  if (tokenNeed > 0n && tokenNeed > held.token) return 'That\'s more ' + sym + ' than your balance.';
+  if (pairNeed > 0n && pairNeed > held.pair) return 'That\'s more ' + pairSym + ' than your balance.';
+  return null;
+}
+// Refuses a change the wallet cannot fund. pos: a refreshed position of the pool.
+export function lpRequireBalances(chainId, pos, acct, plan, paysCap, sym) {
+  var native = function (currency) { return /^0x0{40}$/.test(currency) ? null : currency; };
+  var key = pos.key;
+  return Promise.all([readWalletTokenBalance(chainId, pos.pairIsC0 ? key.currency1 : key.currency0, acct),
+    readWalletTokenBalance(chainId, native(pos.pairIsC0 ? key.currency0 : key.currency1), acct)]).then(function (held) {
+    var problem = lpBalanceProblem(plan, paysCap, { token: held[0], pair: held[1] }, sym, pos.pair.symbol);
+    if (problem) throw new Error(problem);
+  });
+}
+
 // Plain words for a reviewed edit, the same lines juicebox.money shows: what moves between the wallet and the
 // position, what the position holds afterwards, and what the wallet authorizes. `fmt` supplies
 // token(amount) and pair(amount); `band` is the resulting band, already formatted, for a re-band.
@@ -327,7 +350,9 @@ export function openLpEditor(project, chainId, stalePos, acct, onDone) {
       var window = pos.smartWallet ? '30 days: survives a multisig signing queue' : '~20 minutes';
       // What the wallet is asked for before the change itself: the review lists every approval and, inside the
       // Safe App, every call of the batch.
-      return lpWithAllowanceFlags(chainId, acct, posm, !!pos.smartWallet, plan.erc20).then(function (erc20) {
+      return lpRequireBalances(chainId, pos, acct, plan, plan.kind === 'move', sym).then(function () {
+        return lpWithAllowanceFlags(chainId, acct, posm, !!pos.smartWallet, plan.erc20);
+      }).then(function (erc20) {
       if (review.closed) return;
       var prep = { posm: posm, unlockData: plan.unlockData, value: plan.value, erc20: erc20, acct: acct, smartWallet: !!pos.smartWallet,
         stepLabel: 'liquidity change', finalLabel: TITLE[plan.kind], sendingLine: 'Confirm in your wallet…' };
