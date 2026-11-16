@@ -90,13 +90,15 @@ export function txHashForSafeTx(safeTxHash, tries) {
 // legacy/direct wallet-write sites which still expect eth_sendTransaction to
 // behave like an EOA provider. The proposal hash itself must never be passed to
 // eth_getTransactionReceipt.
+// Co-signers can take days: the quick pace lasts a minute, then it asks every 30 seconds.
 export function waitForSafeExecution(safeTxHash, pollingIntervalMs) {
   var interval = pollingIntervalMs == null ? 4000 : pollingIntervalMs;
+  var started = Date.now();
   return new Promise(function (resolve) {
     function poll() {
       txHashForSafeTx(safeTxHash).then(function (hash) {
         if (hash) resolve(hash);
-        else setTimeout(poll, interval);
+        else setTimeout(poll, Date.now() - started < 60000 ? interval : Math.max(interval, 30000));
       });
     }
     poll();
