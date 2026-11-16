@@ -19,6 +19,7 @@ import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
 import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
 import { bridgeLeavesFor, keepBridgeLeaves, dropBridgeLeaves } from './bridge-leaves.js';
+import { livePoll } from './live-poll.js';
 import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive, bestPayRoute } from './pay-preview.js';
 import { PAY_QUOTE_FAILED_MESSAGE, V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from './pay-prepare.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
@@ -7956,7 +7957,7 @@ function scheduleActiveProjectRefresh(project) {
     try { urlProjectId = Number(pidOn(active.project, urlChainId)); }
     catch (_) { return; }
     delete _cache[urlChainId + '-' + urlProjectId];
-    clearProjectNftIdentity(); _tiersCache = {}; _tierMetadataCache = {}; _dataHookCache = {}; _accountingTokenMetadataCache = {};
+    clearProjectNftIdentity(); _tiersCache = {}; _tierMetadataCache = {}; _dataHookCache = {}; _accountingTokenMetadataCache = {}; _suckerMapCache = {};
     fetchProject(urlProjectId, urlChainId).then(function (fresh) {
       if (seq !== _projectRefreshSeq || !_activeDetail || !sameProjectDeployment(_activeDetail.project, project)) return;
       fresh.idByChain = idByChain;
@@ -9209,6 +9210,8 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
     else if (_activeDetail) _activeDetail.showSubTab = subTabSwitch[tabName] || null;
     contentArea.innerHTML = '';
     contentArea.appendChild(built[tabName]);
+    // A cached panel's cards refresh again now that they are back on the page (live-poll.js).
+    document.dispatchEvent(new CustomEvent('jb:tab-shown'));
     var btns = tabRow.querySelectorAll('.detail-tab-btn');
     for (var b = 0; b < btns.length; b++) {
       var isActiveTab = btns[b].textContent === tabName;
@@ -14430,7 +14433,6 @@ export function renderProjectPendingPayments(project) {
 }
 
 export function renderActivityCard(project, opts) {
-  var ACTIVITY_POLL_MS = 15000;
   var card = el('div', 'detail-card');
   var pendingPayments = renderProjectPendingPayments(project);
   card.appendChild(pendingPayments);
@@ -14510,15 +14512,22 @@ export function renderActivityCard(project, opts) {
   // `keepOnEmpty` (used by refreshes) leaves existing rows in place when a refetch returns nothing
   // yet — the indexer lags the chain by a few seconds after a tx confirms.
   // Resolves to the rows, or null when the read failed.
-  var loadSeq = 0;
-  function load(keepOnEmpty) {
+  // `newest` is the probe a poll tick already read. The probe is always read before the rows, so a row indexed
+  // in between shows now and costs one more reload; one indexed after the rows changes the next probe.
+  var loadSeq = 0, newestShown;
+  function load(keepOnEmpty, newest) {
     var seq = ++loadSeq;
-    return fetchProjectSuckerMap(project).then(function (map) {
-      project._suckerMap = map;
+    return Promise.all([
+      fetchProjectSuckerMap(project),
+      newest !== undefined ? newest : probeProjectActivity(project).catch(function () {}),
+    ]).then(function (res) {
+      project._suckerMap = res[0];
+      newest = res[1];
       return fetchProjectActivity(project, cap);
     }).then(function (rows) {
       // A newer load owns the feed; this one's window may be smaller.
       if (!body.isConnected || seq !== loadSeq) return rows;
+      newestShown = newest;
       // New rows slide the window; rows already shown below its edge are history and stay.
       if (rows.more) rows = keepShownActivityRows(rows, allRows);
       hasMore = !!rows.more;
@@ -14562,20 +14571,15 @@ export function renderActivityCard(project, opts) {
     poll();
   };
 
-  // Bendystraw trails confirmed chain state by a few seconds. Keep polling the
-  // open project so an event appears as soon as it is indexed, without making
-  // the user reload. Self-scheduling avoids overlapping slow requests and
-  // stops naturally once this card leaves the document.
-  load(false).then(function schedulePoll() {
-    setTimeout(function () {
-      if (!body.isConnected) return;
-      if (document.visibilityState === 'hidden') {
-        schedulePoll();
-        return;
-      }
+  // Keep the open project's feed current without a reload. A tick asks one small probe; the feed, its ruleset
+  // rows and the pending payments are read again only when the probe differs from the one behind the rows shown.
+  load(false);
+  livePoll(body, function () {
+    return probeProjectActivity(project).then(function (newest) {
+      if (newest === newestShown) return true;
       pendingPayments._refresh();
-      load(true).then(schedulePoll);
-    }, ACTIVITY_POLL_MS);
+      return load(true, newest).then(function (rows) { return !!rows; });
+    });
   });
   return card;
 }
@@ -22973,6 +22977,41 @@ export function mergeActivityPages(results) {
   return { events: events, edge: edge };
 }
 
+// What a poll tick asks in place of the whole feed, per deployment: the newest activity event, and how many
+// rulesets were queued and how many payments await routing (neither is an activity event).
+var BENDYSTRAW_ACTIVITY_PROBE_FIELDS = 'activityEvents(where: { projectId: $projectId, chainId: $chainId, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "desc", limit: 1) { items { id } totalCount } '
+  + 'rulesetQueuedEvents(where: { projectId: $projectId, chainId: $chainId, version: $version }, limit: 1) { totalCount } '
+  + 'routerPendingCalls(where: { chainId: $chainId, sourceProjectId: $projectId, version: $version, status_in: [queued, retried], retainedAmount_gt: "0" }, limit: 1) { totalCount }';
+// One deployment's probe: the form the schema check validates.
+export var BENDYSTRAW_ACTIVITY_PROBE_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!) { ' + BENDYSTRAW_ACTIVITY_PROBE_FIELDS + ' }';
+// Every deployment's probe as one request: the same fields, each deployment under its own aliases and variables.
+export function activityProbeRequest(deployments) {
+  var variables = { version: BENDYSTRAW_VERSION }, declared = ['$version: Int!'], fields = [];
+  deployments.forEach(function (deployment, i) {
+    variables['projectId' + i] = deployment.projectId;
+    variables['chainId' + i] = deployment.chainId;
+    declared.push('$projectId' + i + ': Int!', '$chainId' + i + ': Int!');
+    fields.push(BENDYSTRAW_ACTIVITY_PROBE_FIELDS
+      .replace(/\$(projectId|chainId)\b/g, function (_, name) { return '$' + name + i; })
+      .replace(/\b(activityEvents|rulesetQueuedEvents|routerPendingCalls)\(/g, function (_, field) { return field + i + ': ' + field + '('; }));
+  });
+  return { query: 'query(' + declared.join(', ') + ') { ' + fields.join(' ') + ' }', variables: variables };
+}
+// The probe's answer as one comparable string. The indexer returns the fields in no fixed order.
+export function activityProbeKey(data) {
+  return Object.keys(data || {}).sort().map(function (field) {
+    var result = data[field] || {};
+    return field + '=' + ((result.items && result.items[0] && result.items[0].id) || '') + '/' + result.totalCount;
+  }).join(' ');
+}
+async function probeProjectActivity(project) {
+  var deployments = projectDeployments(project);
+  if (!deployments.length) return '';
+  var request = activityProbeRequest(deployments);
+  return activityProbeKey(await bendystrawQuery(request.query, request.variables));
+}
+
 // `maxItems` bounds each indexer query to its newest rows. The result carries `more` when older rows remain.
 async function fetchProjectActivity(project, maxItems) {
   var deployments = projectDeployments(project);
@@ -30085,14 +30124,22 @@ function renderGossipSection(project) {
 // { chainId -> { lowercased local sucker address -> remoteChainId } }. Used to relabel the cash out a
 // sucker performs under the hood on prepare() as a bridge in the activity feed (not "cashed out"). MUST be
 // keyed by chain: native-bridge suckers share the SAME address on both chains, so a flat map would collide.
+// Read once per project per page session; a failed read is not kept, and a confirmed transaction's project
+// refresh (scheduleActiveProjectRefresh) reads it again.
+var _suckerMapCache = {};
 function fetchProjectSuckerMap(project) {
   var chains = (project.chains || []).map(function (c) { return c.id; });
-  return Promise.all(chains.map(function (C) { return readAllSuckerPairsOf(pidOn(project, C), C).then(function (pairs) { return { C: C, pairs: pairs }; }); }))
+  var key = chains.map(function (C) { return C + ':' + pidOn(project, C); }).join(',');
+  if (_suckerMapCache[key]) return _suckerMapCache[key];
+  var reading = Promise.all(chains.map(function (C) { return readAllSuckerPairsOf(pidOn(project, C), C).then(function (pairs) { return { C: C, pairs: pairs }; }); }))
     .then(function (lists) {
       var map = {};
       lists.forEach(function (x) { var m = map[x.C] = map[x.C] || {}; x.pairs.forEach(function (p) { if (p.local) m[p.local.toLowerCase()] = p.remoteChainId; }); });
       return map;
     });
+  _suckerMapCache[key] = reading;
+  reading.catch(function () { if (_suckerMapCache[key] === reading) delete _suckerMapCache[key]; });
+  return reading;
 }
 
 // syncAccountingData() snapshots the LOCAL chain's accounting and bridges it to the peer (payable AMB fee).
