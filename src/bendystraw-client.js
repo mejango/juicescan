@@ -37,7 +37,7 @@ function endpointForHost(host) {
 
 async function queryAtHost(host, graphql, variables) {
   const url = endpointForHost(host);
-  var res;
+  var res, limited = false;
   for (var attempt = 0; ; attempt++) {
     var wait = (_resumeAt[host] || 0) - Date.now();
     if (wait > 0) await new Promise(function (resolve) { setTimeout(resolve, wait); });
@@ -55,7 +55,12 @@ async function queryAtHost(host, graphql, variables) {
       if (res.status === 429) {
         var retryAfter = res.headers && res.headers.get ? Number(res.headers.get('retry-after')) : 0;
         _resumeAt[host] = Date.now() + (retryAfter > 0 ? Math.min(MAX_RATE_LIMIT_WAIT_MS, retryAfter * 1000) : DEFAULT_RATE_LIMIT_WAIT_MS);
-        if (attempt > 0) break;
+        if (limited) break;
+        // The one retry after a 429 is its own: it does not depend on, or use up, the retries of other failures.
+        limited = true;
+        if (res.body && res.body.cancel) await res.body.cancel();
+        attempt--;
+        continue;
       }
       if (!RETRYABLE_STATUSES[res.status] || attempt === RETRY_DELAYS_MS.length) break;
       if (res.body && res.body.cancel) await res.body.cancel();
