@@ -1,3 +1,24 @@
+# One dropdown caret (2026-11-16)
+
+Resources: `/Users/jango/Documents/jb/v6/evm/AGENTS.md`, `/Users/jango/Documents/jb/v6/evm/workflow/ponytail/SKILL.md`, `/Users/jango/Documents/jb/v6/evm/docs/PLAN_REFINEMENT.md`; local `tasks/lessons.md`. Worktree `.worktrees/rv-juicescan-adopt` on `fix/select-caret`.
+
+## Plan refinement
+
+- **Objective:** No dropdown shows the browser's default arrow flush against the right edge; every one draws the same caret, inset, with padding its text cannot enter. Native selects stay native.
+- **System fit:** `src/style.css` owns the look through one `select:not([multiple], [size])` rule; the selects are built in `src/*.js` with about twenty class combinations and need no markup change. Three script widths that restate the caret room (`src/discover.js` net select, `sizeSelectToText`, `src/pay-component.js`) follow the rule. No read, transaction or signing path is touched.
+- **Reuse and simplicity:** The existing 10 by 6 chevron (already used by `select.create-input`) becomes the single caret; eight per-class copies (three other shapes, two gradient carets, a pseudo-element caret) are deleted. The rule is `!important` so a later `background` or `padding` shorthand cannot wipe the caret or shrink its room; boxless text-style dropdowns set `--select-caret-inset: 0px`, the only knob.
+- **Evidence and unknowns:** The page CSP allows `img-src data:`. At origin/main the bare selects, `.font-selector-sel`, `.rf-chainselect`, `.style-editor-select`, `.ops-chain-select`, `.time-zone-select`, `.safe-nonce-input`, `.funding-chart-select` and `.operator-edit-jwt` selects show the native arrow, and `.create-amount-cur` lets text run under its caret. Live project pages could not be rendered here (the indexer answers 429 to a keyless local build), so their dropdown classes were rendered with the shipped stylesheet in a gallery instead.
+- **Verification:** `test/e2e/select-caret.spec.js` reads the computed style of a bare select and of every class the app uses, enabled and disabled, in the built bundle at four widths; it fails on the old stylesheet. Screenshots at 1280 and 390 of Discover, Create, Actions and the gallery. Then `npm run check`.
+- **Resource budget:** One stylesheet rule, deletions, three script constants, one spec. Startup shrinks (740,889 B gzip against the 742,100 ceiling). Replan if a rendered dropdown shows two carets or clipped selected text.
+
+- [x] Global rule, per-class carets removed
+- [x] Script widths follow the caret room
+- [x] Spec, shown to fail on the old stylesheet
+- [x] Rendered at 1280 and 390
+- [x] `npm run check`
+
+Review: `npm run check` exits 0 on Node 26.13.1 with `DEPLOY_ALL_DEPLOYMENTS_DIR` at the pinned deploy-all-v6 commit (272 unit files, 2824 tests; 152 browser tests). Startup 740,889 B gzip, ceiling unchanged. Not rendered: live project pages (indexer 429 for a keyless local build); Safari and Firefox.
+
 # Fewer network requests (2026-11-16)
 
 jango's rule: a page loads what it needs once, then refreshes about every 30 seconds or on a distinct user action; faster polling only for a short window right after the user sends a transaction. Bendystraw allows 100 requests per minute per IP. No read that protects money or correctness is removed or weakened. Branch `perf/lean-network`, not pushed, for review.
