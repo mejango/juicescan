@@ -14551,15 +14551,17 @@ export function renderActivityCard(project, opts) {
   };
 
   // Keep the open project's feed current without a reload. A tick asks one small probe; the feed, its ruleset
-  // rows and the pending payments are read again only when the probe differs from the one behind the rows shown.
+  // rows and the pending payments are read again only when the probe differs from the one each was read after.
   load(false);
+  var pendingNewest; // the probe read before the panel's last completed read; a failed read leaves it behind
   livePoll(body, function () {
     return probeProjectActivity(project).then(function (newest) {
-      var changed = newest !== newestShown;
       // A listed payment becomes available when its retry wait ends, which changes no count: while any is
       // listed, the panel is read on every tick.
-      if (changed || pendingPayments.querySelector('.pending-payment-row')) pendingPayments._refresh();
-      if (!changed) return true;
+      if (newest !== pendingNewest || pendingPayments.querySelector('.pending-payment-row')) {
+        Promise.resolve(pendingPayments._refresh()).then(function (read) { if (read) pendingNewest = newest; });
+      }
+      if (newest === newestShown) return true;
       return load(true, newest).then(function (rows) { return !!rows; });
     });
   });

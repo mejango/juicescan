@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parse } from 'graphql';
 
-const h = vi.hoisted(() => ({ queries: [], reads: [], newest: 'event-1', failProbe: false }));
+const h = vi.hoisted(() => ({ queries: [], reads: [], newest: 'event-1', failProbe: false, failPending: false }));
 vi.mock('../src/wallet.js', async (original) => ({ ...await original(),
   // No suckers and no queued rulesets onchain.
   createPublicClientForChain: () => ({ readContract: async (request) => { h.reads.push(request.functionName); return []; } }),
@@ -11,6 +11,7 @@ vi.mock('../src/wallet.js', async (original) => ({ ...await original(),
 vi.mock('../src/bendystraw-client.js', async (original) => ({ ...await original(),
   bendystrawQuery: async (query) => {
     h.queries.push(query);
+    if (h.failPending && query.includes('PendingPayments')) throw new Error('Bendystraw HTTP 503');
     if (query.includes('activityEvents0:')) {
       if (h.failProbe) throw new Error('Bendystraw HTTP 503');
       return { activityEvents0: { items: [{ id: h.newest }], totalCount: 1 }, rulesetQueuedEvents0: { totalCount: 0 }, routerPendingCalls0: { totalCount: 0 } };
@@ -50,7 +51,7 @@ describe('activity probe request', () => {
 });
 
 describe('activity card polling', () => {
-  beforeEach(() => { vi.useFakeTimers(); document.body.innerHTML = ''; localStorage.clear(); h.queries = []; h.reads = []; h.newest = 'event-1'; h.failProbe = false; });
+  beforeEach(() => { vi.useFakeTimers(); document.body.innerHTML = ''; localStorage.clear(); h.queries = []; h.reads = []; h.newest = 'event-1'; h.failProbe = false; h.failPending = false; });
   afterEach(() => { vi.useRealTimers(); });
 
   it('sends one probe per 30 s tick and reloads only when the probe changed', async () => {
@@ -64,12 +65,13 @@ describe('activity card polling', () => {
     expect(h.queries.length).toBe(loaded + 1);
     await vi.advanceTimersByTimeAsync(36000);
     expect(probes()).toBe(3);
-    expect(others()).toBe(loaded);
+    // The first tick read the pending payments once more (their first read came before any probe); nothing else.
+    expect(others()).toBe(loaded + 1);
 
     h.newest = 'event-2';
     await vi.advanceTimersByTimeAsync(30000);
     expect(probes()).toBe(4);
-    expect(others()).toBeGreaterThan(loaded);
+    expect(others()).toBeGreaterThan(loaded + 2);
     const reloaded = others();
     await vi.advanceTimersByTimeAsync(30000);
     expect(probes()).toBe(5);
@@ -81,6 +83,8 @@ describe('activity card polling', () => {
     const card = renderActivityCard({ ...project, id: 8, chains: [{ id: 1, name: 'Ethereum', projectId: 8 }] });
     document.body.appendChild(card);
     await vi.advanceTimersByTimeAsync(1000);
+    // The panel's first read came before any probe, so the first tick reads it once more; then it is current.
+    await vi.advanceTimersByTimeAsync(60000);
     const atLoad = pendingReads();
     await vi.advanceTimersByTimeAsync(30000);
     expect(pendingReads()).toBe(atLoad);
@@ -90,6 +94,23 @@ describe('activity card polling', () => {
     card.querySelector('.pending-payments-rows').appendChild(row);
     await vi.advanceTimersByTimeAsync(30000);
     expect(pendingReads()).toBe(atLoad + 1);
+  });
+
+  it('reads the pending payments after the first probe, and again after a failed read', async () => {
+    const pendingReads = () => h.queries.filter((query) => query.includes('PendingPayments')).length;
+    document.body.appendChild(renderActivityCard({ ...project, id: 10, chains: [{ id: 1, name: 'Ethereum', projectId: 10 }] }));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(pendingReads()).toBe(1);
+    // The panel was read before the probe: a payment indexed in between is in the probe but not in the panel.
+    h.failPending = true;
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(pendingReads()).toBe(2);
+    // That read failed, so the unchanged probe does not count as seen.
+    h.failPending = false;
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(pendingReads()).toBe(3);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(pendingReads()).toBe(3);
   });
 
   it('reads the sucker map again once it is ten minutes old', async () => {
