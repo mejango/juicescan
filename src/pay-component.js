@@ -268,8 +268,8 @@ export function renderPayComponent() {
         var current = tokenSelect.options[tokenSelect.selectedIndex];
         if (!current) return;
         var textW = measureToken(current.textContent);
-        // padding-left (14) + text + padding-right (26) + 4px buffer for sub-pixel rendering.
-        tokenSelect.style.width = Math.ceil(textW + 14 + 26 + 4) + 'px';
+        // padding-left (14) + text + padding-right (30, the caret room in style.css) + 4px buffer for sub-pixel rendering.
+        tokenSelect.style.width = Math.ceil(textW + 14 + 30 + 4) + 'px';
       }
       resizeTokenSelect(); // synchronous — fires before the element appears
       tokenSelect.addEventListener('change', function() {

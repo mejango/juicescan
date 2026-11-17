@@ -8496,8 +8496,8 @@ function renderGrid() {
   netSel.addEventListener('change', function () { setDiscoverNetwork(netSel.value); });
   topRow.appendChild(netSel);
   // Size in ch so the width tracks the monospace font itself — a measured pixel width races font loading
-  // and drifts under iframe zoom (the Safe app clipped the trailing glyph). 15px covers the caret padding.
-  netSel.style.width = 'calc(' + (netSel.options[netSel.selectedIndex] || { text: 'Mainnets' }).text.length + 'ch + 15px)';
+  // and drifts under iframe zoom (the Safe app clipped the trailing glyph). 18px is the caret room in style.css.
+  netSel.style.width = 'calc(' + (netSel.options[netSel.selectedIndex] || { text: 'Mainnets' }).text.length + 'ch + 18px)';
   var searchWrap = el('label', 'discover-search');
   var searchInput = document.createElement('input');
   searchInput.type = 'search';
