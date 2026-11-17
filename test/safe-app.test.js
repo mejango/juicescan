@@ -3,7 +3,7 @@
 // AND the bridge's trust boundary: responses are accepted only from window.parent AND an allowlisted Safe
 // web-app origin, and requests are only ever posted to allowlisted origins (never '*').
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { detectSafeApp, makeSafeProvider, proposeSafeTransactions, SAFE_APP_ALLOWED_ORIGINS } from '../src/safe-app.js';
+import { detectSafeApp, makeSafeProvider, proposeSafeTransactions, waitForSafeExecution, SAFE_APP_ALLOWED_ORIGINS } from '../src/safe-app.js';
 
 const SAFE = '0x1111111111111111111111111111111111111111';
 const SAFE_ORIGIN = 'https://app.safe.global';
@@ -85,6 +85,21 @@ describe('Safe App provider', () => {
     const sent = calls.find((c) => c.method === 'sendTransactions');
     expect(sent.params.txs).toEqual([{ to: SAFE, value: '0x0', data: '0xdead' }]);
     expect(calls.some((c) => c.method === 'getTxBySafeTxHash')).toBe(true);
+  });
+
+  it('asks for a proposal\'s execution every 4 s for a minute, then every 30 s', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls = installSafeParent({});
+      const asked = () => calls.filter((c) => c.method === 'getTxBySafeTxHash').length;
+      waitForSafeExecution('0xabc');
+      await vi.advanceTimersByTimeAsync(60000);
+      const firstMinute = asked();
+      expect(firstMinute).toBeGreaterThanOrEqual(14);
+      await vi.advanceTimersByTimeAsync(120000);
+      expect(asked() - firstMinute).toBeLessThanOrEqual(5);
+      expect(asked() - firstMinute).toBeGreaterThanOrEqual(3);
+    } finally { vi.useRealTimers(); }
   });
 
   it('batches multiple txs via proposeSafeTransactions', async () => {

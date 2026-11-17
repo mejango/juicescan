@@ -12,8 +12,10 @@ export const BENDYSTRAW_TIMEOUT_MS = 15000;
 export const MAX_BENDYSTRAW_RESPONSE_BYTES = 5 * 1024 * 1024;
 const RETRY_DELAYS_MS = [250, 750];
 // A 429 names when its window reopens. Every request to that host waits for it, so a
-// rate-limited page finishes late instead of failing.
+// rate-limited page finishes late instead of failing. A 429 that names no time waits the
+// default, and a request is asked again only once after a 429.
 const MAX_RATE_LIMIT_WAIT_MS = 60000;
+const DEFAULT_RATE_LIMIT_WAIT_MS = 5000;
 const _resumeAt = {};
 const RETRYABLE_STATUSES = { 408: true, 429: true, 500: true, 502: true, 503: true, 504: true };
 
@@ -35,7 +37,7 @@ function endpointForHost(host) {
 
 async function queryAtHost(host, graphql, variables) {
   const url = endpointForHost(host);
-  var res;
+  var res, limited = false;
   for (var attempt = 0; ; attempt++) {
     var wait = (_resumeAt[host] || 0) - Date.now();
     if (wait > 0) await new Promise(function (resolve) { setTimeout(resolve, wait); });
@@ -52,7 +54,13 @@ async function queryAtHost(host, graphql, variables) {
       });
       if (res.status === 429) {
         var retryAfter = res.headers && res.headers.get ? Number(res.headers.get('retry-after')) : 0;
-        if (retryAfter > 0) _resumeAt[host] = Date.now() + Math.min(MAX_RATE_LIMIT_WAIT_MS, retryAfter * 1000);
+        _resumeAt[host] = Date.now() + (retryAfter > 0 ? Math.min(MAX_RATE_LIMIT_WAIT_MS, retryAfter * 1000) : DEFAULT_RATE_LIMIT_WAIT_MS);
+        if (limited) break;
+        // The one retry after a 429 is its own: it does not depend on, or use up, the retries of other failures.
+        limited = true;
+        if (res.body && res.body.cancel) await res.body.cancel();
+        attempt--;
+        continue;
       }
       if (!RETRYABLE_STATUSES[res.status] || attempt === RETRY_DELAYS_MS.length) break;
       if (res.body && res.body.cancel) await res.body.cancel();

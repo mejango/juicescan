@@ -18,6 +18,8 @@ import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './t
 import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
 import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
+import { bridgeLeavesFor, keepBridgeLeaves, dropBridgeLeaves } from './bridge-leaves.js';
+import { livePoll } from './live-poll.js';
 import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive, bestPayRoute } from './pay-preview.js';
 import { PAY_QUOTE_FAILED_MESSAGE, V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from './pay-prepare.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
@@ -4847,34 +4849,13 @@ function renderProjectContractWarnings(project) {
 
 // Current AMM price as PAIR-token per project token (ETH/token for ETH pools, USDC/token for USDC pools).
 async function readAmmPrice(project, chainId) {
-  var hook = await projectBuybackHook(project, chainId);
-  var pm = POOL_MANAGER_BY_CHAIN[chainId];
-  if (!hook || !pm) return null;
-  try {
-    var pair = await lpPairFor(project, chainId);
-    var client = clientFor(chainId);
-    // The buyback hook keys its pool by (projectId, terminalToken) — pass the project's actual pair token,
-    // not a hard-coded native 0x0, or a USDC pool is never found.
-    var key = await client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pidOn(project, chainId), pair.addr] });
-    if (!key) return null;
-    var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase();
-    var c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
-    if (c0 === ZERO_ADDRESS && c1 === ZERO_ADDRESS) return null; // pool not set
-    var poolId = uniswapV4PoolId(key);
-    var stateSlot = keccak256(encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [poolId, 6n])); // POOLS_SLOT = 6
-    var slot0 = await client.readContract({ address: pm, abi: extsloadAbi, functionName: 'extsload', args: [stateSlot] });
-    var sqrtP = BigInt(slot0) & ((1n << 160n) - 1n); // sqrtPriceX96 = lower 160 bits of slot0
-    if (sqrtP === 0n) return null;
-    var sp = Number(sqrtP) / Math.pow(2, 96);
-    var rawP = sp * sp; // raw currency1 per currency0 (base units)
-    // Convert raw → human pair-per-token. Project token is 18-dec; pair has pair.decimals.
-    // raw_pair/raw_token = pairIsC0 ? 1/rawP : rawP ; human = raw_ratio × 10^(18 − pairDec).
-    var pairIsC0 = (c0 === pair.addr);
-    var rawRatio = pairIsC0 ? (rawP > 0 ? 1 / rawP : null) : rawP;
-    if (rawRatio == null) return null;
-    var human = rawRatio * Math.pow(10, 18 - pair.decimals);
-    return (isFinite(human) && human > 0) ? human : null;
-  } catch (e) { return null; }
+  return poolAmmPrice(await readPoolState(project, chainId));
+}
+// The same price from a pool state already read (readPoolState), or null without one.
+function poolAmmPrice(pool) {
+  if (!pool) return null;
+  var projectTokenIsCurrency0 = (pool.key.currency0 || ZERO_ADDRESS).toLowerCase() !== pool.pair.addr;
+  return ammPriceFromSqrtPriceX96(pool.sqrtP, projectTokenIsCurrency0, pool.pair.decimals);
 }
 
 // ── Direct AMM sell (bypass the terminal cash out) ─────────────────────────────────────────────────
@@ -7955,7 +7936,7 @@ function scheduleActiveProjectRefresh(project) {
     try { urlProjectId = Number(pidOn(active.project, urlChainId)); }
     catch (_) { return; }
     delete _cache[urlChainId + '-' + urlProjectId];
-    clearProjectNftIdentity(); _tiersCache = {}; _tierMetadataCache = {}; _dataHookCache = {}; _accountingTokenMetadataCache = {};
+    clearProjectNftIdentity(); _tiersCache = {}; _tierMetadataCache = {}; _dataHookCache = {}; _accountingTokenMetadataCache = {}; _suckerMapCache = {};
     fetchProject(urlProjectId, urlChainId).then(function (fresh) {
       if (seq !== _projectRefreshSeq || !_activeDetail || !sameProjectDeployment(_activeDetail.project, project)) return;
       fresh.idByChain = idByChain;
@@ -9208,6 +9189,8 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
     else if (_activeDetail) _activeDetail.showSubTab = subTabSwitch[tabName] || null;
     contentArea.innerHTML = '';
     contentArea.appendChild(built[tabName]);
+    // A cached panel's cards refresh again now that they are back on the page (live-poll.js).
+    document.dispatchEvent(new CustomEvent('jb:tab-shown'));
     var btns = tabRow.querySelectorAll('.detail-tab-btn');
     for (var b = 0; b < btns.length; b++) {
       var isActiveTab = btns[b].textContent === tabName;
@@ -14429,7 +14412,6 @@ export function renderProjectPendingPayments(project) {
 }
 
 export function renderActivityCard(project, opts) {
-  var ACTIVITY_POLL_MS = 15000;
   var card = el('div', 'detail-card');
   var pendingPayments = renderProjectPendingPayments(project);
   card.appendChild(pendingPayments);
@@ -14509,15 +14491,22 @@ export function renderActivityCard(project, opts) {
   // `keepOnEmpty` (used by refreshes) leaves existing rows in place when a refetch returns nothing
   // yet — the indexer lags the chain by a few seconds after a tx confirms.
   // Resolves to the rows, or null when the read failed.
-  var loadSeq = 0;
-  function load(keepOnEmpty) {
+  // `newest` is the probe a poll tick already read. The probe is always read before the rows, so a row indexed
+  // in between shows now and costs one more reload; one indexed after the rows changes the next probe.
+  var loadSeq = 0, newestShown;
+  function load(keepOnEmpty, newest) {
     var seq = ++loadSeq;
-    return fetchProjectSuckerMap(project).then(function (map) {
-      project._suckerMap = map;
+    return Promise.all([
+      fetchProjectSuckerMap(project),
+      newest !== undefined ? newest : probeProjectActivity(project).catch(function () {}),
+    ]).then(function (res) {
+      project._suckerMap = res[0];
+      newest = res[1];
       return fetchProjectActivity(project, cap);
     }).then(function (rows) {
       // A newer load owns the feed; this one's window may be smaller.
       if (!body.isConnected || seq !== loadSeq) return rows;
+      newestShown = newest;
       // New rows slide the window; rows already shown below its edge are history and stay.
       if (rows.more) rows = keepShownActivityRows(rows, allRows);
       hasMore = !!rows.more;
@@ -14561,20 +14550,20 @@ export function renderActivityCard(project, opts) {
     poll();
   };
 
-  // Bendystraw trails confirmed chain state by a few seconds. Keep polling the
-  // open project so an event appears as soon as it is indexed, without making
-  // the user reload. Self-scheduling avoids overlapping slow requests and
-  // stops naturally once this card leaves the document.
-  load(false).then(function schedulePoll() {
-    setTimeout(function () {
-      if (!body.isConnected) return;
-      if (document.visibilityState === 'hidden') {
-        schedulePoll();
-        return;
+  // Keep the open project's feed current without a reload. A tick asks one small probe; the feed, its ruleset
+  // rows and the pending payments are read again only when the probe differs from the one each was read after.
+  load(false);
+  var pendingNewest; // the probe read before the panel's last completed read; a failed read leaves it behind
+  livePoll(body, function () {
+    return probeProjectActivity(project).then(function (newest) {
+      // A listed payment becomes available when its retry wait ends, which changes no count: while any is
+      // listed, the panel is read on every tick.
+      if (newest !== pendingNewest || pendingPayments.querySelector('.pending-payment-row')) {
+        Promise.resolve(pendingPayments._refresh()).then(function (read) { if (read) pendingNewest = newest; });
       }
-      pendingPayments._refresh();
-      load(true).then(schedulePoll);
-    }, ACTIVITY_POLL_MS);
+      if (newest === newestShown) return true;
+      return load(true, newest).then(function (rows) { return !!rows; });
+    });
   });
   return card;
 }
@@ -17367,7 +17356,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
       return Promise.all([
         requireFreshSafeGovernance(safe, c.id),
         readSafeUintBounded(clientFor(c.id), safe, 'nonce'),
-        listPendingSafeTxs(c.id, safe),
+        listPendingSafeTxs(c.id, safe, { share: true }),
       ]).then(async function (loaded) {
         var info = loaded[0];
         var currentBig = BigInt(loaded[1]);
@@ -20729,7 +20718,7 @@ function readBasePerAcctRate(project, chainId) {
 // Hero price chart shown above the tabs for revnets: the Issuance Price ladder (the ceiling). AMM
 // price (pool slot0, once it has liquidity) and Cash out price (the floor, once Bendystraw indexes V6)
 // are surfaced in the legend and join later — issuance and cash out bound the AMM price.
-function renderPriceChart(project, stages) {
+export function renderPriceChart(project, stages) {
   var sym = project.tokenSymbol || 'tokens';
   var sorted = stages.slice().sort(function (a, b) { return Number(a.start) - Number(b.start); });
   var now = Math.floor(Date.now() / 1000);
@@ -20881,17 +20870,23 @@ function renderPriceChart(project, stages) {
   draw();
 
   // Live AMM price (pool slot0, works even with zero liquidity), current cash out floor, and
-  // indexed floor history from Bendystraw's sucker group moments.
+  // indexed floor history from Bendystraw's sucker group moments. The pool is read once for the price and the
+  // history; a failed read is an unknown pool, not a missing one.
+  var poolRead = readPoolState(project, project.chainId, { strict: true });
+  var drawnSwaps = null; // the last swap history read, with the indexer row counts it was read at
+  var poolOrNone = poolRead.catch(function () { return null; });
   Promise.all([
-    readAmmPrice(project, project.chainId),
+    poolOrNone.then(poolAmmPrice),
     readCashoutPrice(project, project.chainId),
     fetchPriceFloorHistory(project, sorted),
-    fetchSwapHistory(project).catch(function () { return null; }),
+    fetchSwapHistory(project, poolOrNone).catch(function () { return null; }),
     readLpPositions(project, project.chainId).catch(function () { return null; }),
     readBasePerAcctRate(project, project.chainId),
   ]).then(function (res) {
     var p = res[0], f = res[1], history = res[2] || [];
     var swaps = res[3] || { series: [], buyVolume: 0, sellVolume: 0, count: 0, pair: null, reserves: [] };
+    // As the indexer returned it: a refresh that finds no new rows draws this again.
+    drawnSwaps = res[3] || null;
     var lp = res[4];
     var basePerAcct = res[5];
     // Re-checked, not reused: `unitMismatch` above is captured while `project.acctToken` may still
@@ -21016,50 +21011,44 @@ function renderPriceChart(project, stages) {
 
   // Keep the active chart caught up with a busy pool. Bendystraw supplies the exact post-trade history;
   // slot0 supplies the authoritative live endpoint while the newest swap is still being indexed.
-  var priceRefreshPending = false;
-  var priceRefreshTimer;
+  // Each refresh reads the pool once and asks the indexer for its row counts; the history is paged again only
+  // when those differ from the history drawn (or could not be read).
   function refreshLivePrice() {
-    if (!card.isConnected) {
-      window.clearInterval(priceRefreshTimer);
-      document.removeEventListener('visibilitychange', onPriceVisibilityChange);
-      return;
-    }
-    if (document.visibilityState === 'hidden' || priceRefreshPending) return;
-    priceRefreshPending = true;
-    Promise.all([
-      readAmmPrice(project, project.chainId),
-      fetchSwapHistory(project).catch(function () { return null; }),
-    ]).then(function (res) {
-      if (!card.isConnected) return;
-      var live = res[0], swaps = res[1];
-      now = Math.floor(Date.now() / 1000);
-      if (swaps) {
-        ammHistory = (swaps.series || []).slice();
-        poolReserves = swaps.reserves || [];
-        if (swaps.pair) ammPairSym = swaps.pair.symbol;
-      }
-      if (live && live > 0) {
-        amm = live;
-        ammHistory.push({ timestamp: now, value: live });
-        ammChip.classList.remove('muted'); ammChip.classList.add('active');
-        setChipVal(ammChip, formatPrice(live), ammChipTail);
-        var tradeNote = swaps && swaps.count
-          ? swaps.count + ' trade' + (swaps.count === 1 ? '' : 's') + ' | '
-            + formatPrice(swaps.buyVolume + swaps.sellVolume) + ' ' + ammPairSym + ' volume | '
-          : '';
-        ammChip.setAttribute('data-tip', 'What the Uniswap pool charges per ' + sym + ' right now. Compare it with paying the project or cashing out; market prices can move outside those quotes. '
-          + tradeNote + '~' + formatPrice(live) + ' ' + ammPairSym + ' / ' + sym + '.');
-        draw();
-      }
-    }).catch(function () {
-      // Keep the last known-good chart; the next foreground tick retries.
-    }).finally(function () { priceRefreshPending = false; });
+    return readPoolState(project, project.chainId).then(function (pool) {
+      if (!pool) return false;
+      return poolHistoryCounts(pool, project.chainId).catch(function () { return null; }).then(function (indexed) {
+        var current = drawnSwaps && indexed != null && drawnSwaps.indexed === indexed;
+        return current ? drawnSwaps : fetchSwapHistory(project, pool).catch(function () { return null; });
+      }).then(function (swaps) {
+        if (!card.isConnected) return;
+        var live = poolAmmPrice(pool);
+        now = Math.floor(Date.now() / 1000);
+        if (swaps) {
+          drawnSwaps = swaps;
+          ammHistory = (swaps.series || []).slice();
+          poolReserves = swaps.reserves || [];
+          if (swaps.pair) ammPairSym = swaps.pair.symbol;
+        }
+        if (live && live > 0) {
+          amm = live;
+          ammHistory.push({ timestamp: now, value: live });
+          ammChip.classList.remove('muted'); ammChip.classList.add('active');
+          setChipVal(ammChip, formatPrice(live), ammChipTail);
+          var tradeNote = swaps && swaps.count
+            ? swaps.count + ' trade' + (swaps.count === 1 ? '' : 's') + ' | '
+              + formatPrice(swaps.buyVolume + swaps.sellVolume) + ' ' + ammPairSym + ' volume | '
+            : '';
+          ammChip.setAttribute('data-tip', 'What the Uniswap pool charges per ' + sym + ' right now. Compare it with paying the project or cashing out; market prices can move outside those quotes. '
+            + tradeNote + '~' + formatPrice(live) + ' ' + ammPairSym + ' / ' + sym + '.');
+          draw();
+        }
+      });
+    });
   }
-  function onPriceVisibilityChange() {
-    if (document.visibilityState === 'visible') refreshLivePrice();
-  }
-  priceRefreshTimer = window.setInterval(refreshLivePrice, 30000);
-  document.addEventListener('visibilitychange', onPriceVisibilityChange);
+  // A project with no pool has nothing to refresh. An unread pool may exist, so it is polled.
+  poolRead.then(function (pool) { return !!pool; }, function () { return true; }).then(function (mayHavePool) {
+    if (mayHavePool) livePoll(card, refreshLivePrice);
+  });
   return card;
 }
 
@@ -22662,14 +22651,16 @@ export function explainCashOutChange(previous, current) {
 // its registration price; each swap contributes its exact post-trade V4 spot.
 // Older rows without sqrtPriceX96 retain the realized average-price fallback.
 // Returns the empty shape if the model isn't indexed yet — never fabricates.
-async function fetchSwapHistory(project) {
+// `knownPool` is a pool state (or its promise) the caller already read, so the pool is not read twice.
+// `indexed` in the result is how many rows the indexer held behind it (poolHistoryCounts gives the same key).
+async function fetchSwapHistory(project, knownPool) {
   var empty = { series: [], buyVolume: 0, sellVolume: 0, count: 0, pair: null, reserves: [] };
   var chainId = Number(project.chainId);
   if (!chainId) return empty;
 
   // The pool is the whole scope: a project can retain events from superseded pools, and decimals and
   // prices are only comparable inside one exact pool.
-  var pool = await readPoolState(project, chainId);
+  var pool = knownPool !== undefined ? await knownPool : await readPoolState(project, chainId);
   if (!pool || !pool.poolId) return empty;
   var pair = pool.pair;
   var pairScale = Math.pow(10, Number(pair && pair.decimals != null ? pair.decimals : 18));
@@ -22752,7 +22743,23 @@ async function fetchSwapHistory(project) {
     pair: pair,
     reserves: reserves,
     sampled: series.length < (pages[0].totalCount || 0) + (pages[1].totalCount || 0),
+    indexed: poolHistoryKey(pool, pages),
   };
+}
+
+// How many swaps, pool registrations and liquidity changes the indexer holds for a pool, in one request: what a
+// price refresh asks before paging the history again.
+export var BENDYSTRAW_POOL_HISTORY_COUNTS_QUERY = 'query($poolId: String!, $chainId: Int!, $version: Int!) { '
+  + 'swapEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, limit: 1) { totalCount } '
+  + 'buybackPoolEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, limit: 1) { totalCount } '
+  + 'buybackPoolLiquidityEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, limit: 1) { totalCount } }';
+// The pool is part of the key: another pool with the same counts is another history.
+function poolHistoryKey(pool, pages) {
+  return String(pool.poolId).toLowerCase() + ':' + pages.map(function (page) { return Number(page && page.totalCount) || 0; }).join('/');
+}
+function poolHistoryCounts(pool, chainId) {
+  return bendystrawQuery(BENDYSTRAW_POOL_HISTORY_COUNTS_QUERY, { poolId: pool.poolId, chainId: Number(chainId), version: BENDYSTRAW_VERSION })
+    .then(function (data) { return poolHistoryKey(pool, [data.swapEvents, data.buybackPoolEvents, data.buybackPoolLiquidityEvents]); });
 }
 
 // Indexed project stats (volume / payments / contributors) from Bendystraw. Prefers the
@@ -22972,6 +22979,42 @@ export function mergeActivityPages(results) {
   return { events: events, edge: edge };
 }
 
+// What a poll tick asks in place of the whole feed, per deployment: the newest activity event, and how many
+// rulesets were queued and how many payments await routing (neither is an activity event).
+var BENDYSTRAW_ACTIVITY_PROBE_FIELDS = 'activityEvents(where: { projectId: $projectId, chainId: $chainId, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "desc", limit: 1) { items { id } totalCount } '
+  + 'rulesetQueuedEvents(where: { projectId: $projectId, chainId: $chainId, version: $version }, limit: 1) { totalCount } '
+  + 'routerPendingCalls(where: { chainId: $chainId, sourceProjectId: $projectId, version: $version, status_in: [queued, retried], retainedAmount_gt: "0" }, limit: 1) { totalCount }';
+// One deployment's probe: the form the schema check validates.
+export var BENDYSTRAW_ACTIVITY_PROBE_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!) { ' + BENDYSTRAW_ACTIVITY_PROBE_FIELDS + ' }';
+// Every deployment's probe as one request: the same fields, each deployment under its own aliases and variables.
+export function activityProbeRequest(deployments) {
+  var variables = { version: BENDYSTRAW_VERSION }, declared = ['$version: Int!'], fields = [];
+  deployments.forEach(function (deployment, i) {
+    variables['projectId' + i] = deployment.projectId;
+    variables['chainId' + i] = deployment.chainId;
+    declared.push('$projectId' + i + ': Int!', '$chainId' + i + ': Int!');
+    fields.push(BENDYSTRAW_ACTIVITY_PROBE_FIELDS
+      .replace(/\$(projectId|chainId)\b/g, function (_, name) { return '$' + name + i; })
+      .replace(/\b(activityEvents|rulesetQueuedEvents|routerPendingCalls)\(/g, function (_, field) { return field + i + ': ' + field + '('; }));
+  });
+  // Built with concat: the schema check reads `+` chains as fixed documents, and this one exists only at run time.
+  return { query: 'query('.concat(declared.join(', '), ') { ', fields.join(' '), ' }'), variables: variables };
+}
+// The probe's answer as one comparable string. The indexer returns the fields in no fixed order.
+export function activityProbeKey(data) {
+  return Object.keys(data || {}).sort().map(function (field) {
+    var result = data[field] || {};
+    return field + '=' + ((result.items && result.items[0] && result.items[0].id) || '') + '/' + result.totalCount;
+  }).join(' ');
+}
+async function probeProjectActivity(project) {
+  var deployments = projectDeployments(project);
+  if (!deployments.length) return '';
+  var request = activityProbeRequest(deployments);
+  return activityProbeKey(await bendystrawQuery(request.query, request.variables));
+}
+
 // `maxItems` bounds each indexer query to its newest rows. The result carries `more` when older rows remain.
 async function fetchProjectActivity(project, maxItems) {
   var deployments = projectDeployments(project);
@@ -23116,7 +23159,6 @@ async function fetchRulesetQueueRows(project) {
 // root + executed bitmap. So we read it all from chain in one consistent pass.) Per sucker: enumerate the
 // outbound InsertToOutboxTree leaves, then derive per-leaf status from the source outbox (sent?) and the
 // destination inbox (delivered? claimed?). Claimable rows carry a locally-verified merkle proof.
-var BRIDGE_LEAF_CACHE = {};
 async function fetchBridgeTransactions(project) {
   var chains = (project.chains || []).map(function (c) { return c.id; });
   var rows = [];
@@ -23168,9 +23210,9 @@ async function fetchBridgeTransactions(project) {
         };
         var W = RPC_LOG_WINDOW, cursor = latest;
         var cacheKey = C + ':' + srcSucker.toLowerCase() + ':' + TOKEN.toLowerCase();
-        var cachedLeaves = BRIDGE_LEAF_CACHE[cacheKey];
-        var byIndex = cachedLeaves && cachedLeaves.count <= count ? Object.assign({}, cachedLeaves.byIndex) : {};
-        var blockOf = cachedLeaves && cachedLeaves.count <= count ? Object.assign({}, cachedLeaves.blockOf) : {};
+        var cachedLeaves = bridgeLeavesFor(cacheKey, count);
+        var byIndex = cachedLeaves ? Object.assign({}, cachedLeaves.byIndex) : {};
+        var blockOf = cachedLeaves ? Object.assign({}, cachedLeaves.blockOf) : {};
         while (Object.keys(byIndex).length < count && cursor >= 0n) {
           var windows = [];
           for (var n = 0; n < 4 && cursor >= 0n; n++) {
@@ -23194,6 +23236,7 @@ async function fetchBridgeTransactions(project) {
         }
         var latestProof = suckerLeafProof(leafHashes, count - 1);
         if (suckerBranchRoot(leafHashes[count - 1], latestProof, count - 1).toLowerCase() !== String(byIndex[count - 1].root).toLowerCase()) {
+          dropBridgeLeaves(cacheKey);
           throw new Error('The reconstructed bridge outbox does not match its latest emitted root.');
         }
 
@@ -23204,7 +23247,7 @@ async function fetchBridgeTransactions(project) {
           if ((byIndex[key].root || '').toLowerCase() === inboxRoot.toLowerCase()) deliveredCount = Number(key) + 1;
         });
 
-        var ts = cachedLeaves && cachedLeaves.count <= count ? Object.assign({}, cachedLeaves.ts || {}) : {};
+        var ts = cachedLeaves ? Object.assign({}, cachedLeaves.ts || {}) : {};
         var timestamps = await Promise.all(Object.keys(blockOf).filter(function (key) { return ts[key] == null; }).map(async function (key) {
           var block;
           try { block = await logClient.getBlock({ blockNumber: blockOf[key] }); }
@@ -23212,7 +23255,7 @@ async function fetchBridgeTransactions(project) {
           return [key, Number(block.timestamp)];
         }));
         timestamps.forEach(function (entry) { ts[entry[0]] = entry[1]; });
-        BRIDGE_LEAF_CACHE[cacheKey] = { count: count, byIndex: byIndex, blockOf: blockOf, ts: ts };
+        keepBridgeLeaves(cacheKey, { count: count, byIndex: byIndex, blockOf: blockOf, ts: ts });
         var executedRows = await Promise.all(Array.from({ length: count }, async function (_, index) {
           var hash = await clientFor(R).readContract({ address: peerSucker, abi: suckerClaimAbi, functionName: 'executedLeafHashOf', args: [RTOKEN, BigInt(index)] });
           return !!(hash && !/^0x0+$/.test(hash));
@@ -27252,13 +27295,13 @@ function renderBridgeTransactions(project) {
   // While anything is still in flight (sent but not yet delivered/claimable), re-read onchain every 45s so
   // the row flips to "claimable" on its own once the destination inbox receives the root — no manual reload.
   var pollTimer = null;
-  function schedulePoll() {
+  function schedulePoll(failed) {
     if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
     if (!body.isConnected) return;
     var inFlight = rows.some(function (r) { return r.status === 'pending'; });
-    // Self-heal a transient empty scan: a flaky getLogs can return nothing even though movements exist, so
-    // retry a few times quickly when the table is empty before giving up.
-    var retryEmpty = rows.length === 0 && emptyRetries < 4;
+    // A scan that threw with nothing on screen is retried a few times quickly. A scan that returned is complete
+    // (it is checked against each outbox's leaf count), so an empty one is final.
+    var retryEmpty = !!failed && rows.length === 0 && emptyRetries < 4;
     if (!inFlight && !retryEmpty) return;
     if (rows.length === 0) emptyRetries++;
     pollTimer = setTimeout(function () { if (body.isConnected) load(); }, rows.length === 0 ? 8000 : 45000);
@@ -27287,7 +27330,7 @@ function renderBridgeTransactions(project) {
       if (seq !== loadSeq || !body.isConnected) return;
       // Don't wipe a populated table on a failed re-read — only show the error when we have nothing.
       if (!rows.length) { body.className = 'detail-card-body bridge-empty'; body.textContent = 'Could not load bridge transactions.'; }
-      schedulePoll();
+      schedulePoll(true);
     });
   }
 
@@ -30084,14 +30127,24 @@ function renderGossipSection(project) {
 // { chainId -> { lowercased local sucker address -> remoteChainId } }. Used to relabel the cash out a
 // sucker performs under the hood on prepare() as a bridge in the activity feed (not "cashed out"). MUST be
 // keyed by chain: native-bridge suckers share the SAME address on both chains, so a flat map would collide.
+// Kept per project for ten minutes, so a sucker pair deployed elsewhere is picked up. A failed read is not
+// kept, and a confirmed transaction's project refresh (scheduleActiveProjectRefresh) reads it again.
+var SUCKER_MAP_CACHE_MS = 10 * 60 * 1000;
+var _suckerMapCache = {};
 function fetchProjectSuckerMap(project) {
   var chains = (project.chains || []).map(function (c) { return c.id; });
-  return Promise.all(chains.map(function (C) { return readAllSuckerPairsOf(pidOn(project, C), C).then(function (pairs) { return { C: C, pairs: pairs }; }); }))
+  var key = chains.map(function (C) { return C + ':' + pidOn(project, C); }).join(',');
+  var kept = _suckerMapCache[key];
+  if (kept && Date.now() - kept.at < SUCKER_MAP_CACHE_MS) return kept.reading;
+  var reading = Promise.all(chains.map(function (C) { return readAllSuckerPairsOf(pidOn(project, C), C).then(function (pairs) { return { C: C, pairs: pairs }; }); }))
     .then(function (lists) {
       var map = {};
       lists.forEach(function (x) { var m = map[x.C] = map[x.C] || {}; x.pairs.forEach(function (p) { if (p.local) m[p.local.toLowerCase()] = p.remoteChainId; }); });
       return map;
     });
+  _suckerMapCache[key] = { at: Date.now(), reading: reading };
+  reading.catch(function () { if (_suckerMapCache[key] && _suckerMapCache[key].reading === reading) delete _suckerMapCache[key]; });
+  return reading;
 }
 
 // syncAccountingData() snapshots the LOCAL chain's accounting and bridges it to the peer (payable AMB fee).

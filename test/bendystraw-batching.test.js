@@ -39,4 +39,34 @@ describe('Bendystraw request volume', () => {
     expect(await result).toEqual({ ok: true });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it('waits 5 s after a 429 with no Retry-After, asks once more, then fails', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + 120000); // past any wait an earlier test left on the host
+    const limited = { ok: false, status: 429, statusText: 'Too Many Requests', headers: new Headers(), body: null };
+    const fetchMock = vi.fn().mockResolvedValue(limited);
+    vi.stubGlobal('fetch', fetchMock);
+    const result = bendystrawQuery('{ ok }').catch((error) => error);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect((await result).message).toContain('429');
+  });
+
+  it('gives the first 429 its retry even after other failures used the quick retries', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + 300000);
+    const ok = { ok: true, status: 200, headers: new Headers({ 'content-type': 'application/json' }), text: async () => '{"data":{"ok":true}}' };
+    const down = { ok: false, status: 503, statusText: 'Unavailable', headers: new Headers(), body: null };
+    const limited = { ok: false, status: 429, statusText: 'Too Many Requests', headers: new Headers(), body: null };
+    const fetchMock = vi.fn().mockResolvedValueOnce(down).mockResolvedValueOnce(down).mockResolvedValueOnce(limited).mockResolvedValue(ok);
+    vi.stubGlobal('fetch', fetchMock);
+    const result = bendystrawQuery('{ ok }');
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(await result).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
 });

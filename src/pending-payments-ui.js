@@ -65,8 +65,9 @@ export function renderPendingPayments(options) {
     updateActions();
   }
 
+  // Resolves true when this call read the list and drew it.
   async function load() {
-    if (busy) return;
+    if (busy) return false;
     var current = ++generation;
     complete = false; updateActions();
     try {
@@ -79,17 +80,19 @@ export function renderPendingPayments(options) {
         try { return await options.readState(row); }
         catch (error) { return { row: row, eligible: false, error: error.message || 'Read failed.' }; }
       }));
-      if (current !== generation) return;
+      if (current !== generation) return false;
       states = next.filter(Boolean); complete = states.every(function (state) { return !state.error; });
       card.hidden = !states.length && !saved();
       if (complete) setStatus('', '');
       else setStatus('Some payments could not be verified. Refresh before batching.', 'error');
       renderRows();
+      return true;
     } catch (error) {
-      if (current !== generation) return;
+      if (current !== generation) return false;
       card.hidden = false;
       setStatus('Could not load payments awaiting routing. ' + (error.message || 'Try again.'), 'error');
       updateActions();
+      return false;
     }
   }
 

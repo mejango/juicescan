@@ -266,7 +266,20 @@ export async function proposeSafeTx(opts) {
 
 // List the Safe's pending (not-yet-executed) queued transactions on `chainId`. Every read must succeed and every
 // page must be fetched: callers decide "nothing queued" from this list, so a partial answer rejects.
-export async function listPendingSafeTxs(chainId, safe) {
+// Every call reads the queue itself, so a read that decides a signature or a proposal sees what is queued at
+// that moment. Display-only callers (the queue card, the batch tray's "already proposed" note) pass
+// `{ share: true }` and join a read another sharing caller has under way; nothing is kept once it settles.
+var _queueInflight = {};
+export function listPendingSafeTxs(chainId, safe, opts) {
+  if (!(opts && opts.share)) return readPendingSafeTxs(chainId, safe);
+  var key = chainId + ':' + String(safe).toLowerCase();
+  if (_queueInflight[key]) return _queueInflight[key];
+  var p = readPendingSafeTxs(chainId, safe);
+  _queueInflight[key] = p;
+  p.then(function () { delete _queueInflight[key]; }, function () { delete _queueInflight[key]; });
+  return p;
+}
+async function readPendingSafeTxs(chainId, safe) {
   var base = txBase(chainId);
   if (!base) return [];
   // Only nonces at/after the Safe's current nonce are executable — lower ones are dead (replaced/abandoned)
@@ -289,7 +302,8 @@ export async function listPendingSafeTxs(chainId, safe) {
   throw new Error('Your Safe queue is too long to check here. Clear it in Safe{Wallet} first.');
 }
 var SAFE_QUEUE_PAGE = 50, SAFE_QUEUE_MAX_PAGES = 10;
-// One queue page: gateway first (base), then the legacy host as a fallback.
+// One queue page: gateway first (base), then the legacy host as a fallback. A host is asked a second time only
+// after a server error or a network failure; any other refusal would repeat (a 429 has its own waits in safeFetch).
 async function safeQueuePage(chainId, base, path) {
   var bases = [base, legacyBase(chainId)].filter(function (v, i, a) { return v && a.indexOf(v) === i; });
   var lastErr = null;
@@ -299,6 +313,7 @@ async function safeQueuePage(chainId, base, path) {
         var r = await safeFetch(bases[b] + path, { headers: headers(false) });
         if (r.ok) return await r.json();
         lastErr = new Error('Safe service ' + r.status);
+        if (r.status < 500) break;
       } catch (e) { lastErr = e; }
       if (attempt === 0) await new Promise(function (res) { setTimeout(res, 500); });
     }

@@ -1,3 +1,32 @@
+# Fewer network requests (2026-11-16)
+
+jango's rule: a page loads what it needs once, then refreshes about every 30 seconds or on a distinct user action; faster polling only for a short window right after the user sends a transaction. Bendystraw allows 100 requests per minute per IP. No read that protects money or correctness is removed or weakened. Branch `perf/lean-network`, not pushed, for review.
+
+- [x] 1 Activity card: 30 s poll; a tick sends one probe and reloads (activity, ruleset rows, pending payments) only when it changed; sucker map kept per project for the session; post-transaction fast path unchanged. `test/activity-poll.test.js`.
+- [x] 2 Live price: no timer without a pool; pool key and slot0 read once per refresh; indexed history paged again only when the indexer's row counts changed (full paging kept, no incremental merge). `test/price-refresh.test.js`.
+- [x] 3 Indexer failures: a 429 without Retry-After waits 5 s and is retried once (`test/bendystraw-batching.test.js`); a failed poll tick doubles the interval, capped at 4 minutes, reset on success (`test/live-poll.test.js`).
+- [x] 4 Safe queue: in-flight dedupe for `listPendingSafeTxs`; nothing kept after it settles, so dialog-open and propose-time reads stay fresh. `test/safe-runtime.test.js`.
+- [x] 5 Bridge leaves over an hour old persisted with `src/cache.js` (`src/bridge-leaves.js`), validated by the outbox count, still verified against the emitted root, dropped on a mismatch. `test/bridge-leaves.test.js`.
+- [x] 6 Empty bridge table: retry only when a read threw. `test/bridge-movements-listener.test.js`.
+- [x] 7 Held writes: 30 s, skipped while hidden, focus refresh at most once per 30 s, an unsettled row re-read for ten minutes and then only by Check, which reads again before offering a release. `test/held-writes-polling.test.js`.
+- [x] 8 `waitForSafeExecution`: 4 s for the first minute, then 30 s. `test/safe-app.test.js`.
+- [x] 9 Safe queue page: a host is repeated only after a 5xx or a network error; the legacy host is still tried. `test/safe-runtime.test.js`.
+- [x] 10 Real: the price timer and, on phones, the activity loop stopped for good once their tab was switched away. Both use `src/live-poll.js` and resume on `jb:tab-shown`, which `showTab` dispatches.
+- [x] Full `npx vitest run`, `npm run check:source`, `schema:check`, `transaction:check`, `check:bundle`; commits per finding.
+
+## Review
+- Startup grew 1,094 B gzip (740,086 to 741,180), over the 741,000 ceiling; the ceiling is now 742,100 in its own commit, for jango to accept or reject.
+- Not covered by a unit test: the one line in `showTab` that dispatches `jb:tab-shown` (the resume itself is tested in `test/live-poll.test.js`).
+- Seen, not changed, not verified in a browser: the price refresh appears to draw pool values without the base-currency conversion the first load applies when the issuance currency differs from the accounting token.
+
+## Plan refinement
+- **Objective:** Juicescan asks the indexer, the Safe service and RPC less often or not twice, per the ten audited findings, with no change to what a user is shown before signing. Success is each finding done with a test that fails without it, or skipped with a stated reason.
+- **System fit:** Read cadence lives with each card in `src/discover.js`; the indexer client (`src/bendystraw-client.js`), Safe service client (`src/safe.js`), held writes (`src/held-writes.js`) and cache (`src/cache.js`) keep their owners. Pre-sign re-reads, Safe policy and nonce re-verification, proof reads and the fee-buyback block watch are untouched; authority and execution links are unaffected.
+- **Reuse and simplicity:** One new small owner, `src/live-poll.js`, holds the poll rule (30 s, idle while hidden or detached, resume when shown, double after a failure) for both the activity card and the price chart instead of two hand-rolled timers. Reused: `cacheGet`/`cacheSet`, the nonce in-flight pattern, `onDocumentWhileConnected`, `ammPriceFromSqrtPriceX96`, `readPoolState`.
+- **Evidence and unknowns:** The findings come from a read-only audit at 9936c82 and each is re-read in source before a change. Unknown until tried: whether an incremental swap merge is safe (the series is downsampled and reserves are replayed, so a count probe with full paging on change is the fallback), and whether the live indexer accepts the aliased probe query (the schema check covers the fields).
+- **Verification:** A vitest regression per behavior change (fake timers for cadence), the affected tests as each lands, then `npx vitest run` and `npm run check:source`. The deployment-parity step of `npm run check` fails locally for environment reasons and is not part of this evidence.
+- **Resource budget:** One worktree, one finding at a time, `discover.js` read by line range only, small commits. Replan if a finding is wrong in source or a change would delay or weaken a pre-sign read; such a finding is skipped and reported.
+
 # Parity with juicebox.money (2026-11-13)
 
 jango: fix everywhere Juicescan is behind and everywhere juicebox.money is behind; home page and sign-in stay different by design; the Build guide becomes the same; revnet.money aligned too, scoped to revnets; thorough; unsure items go in one list at the end. Source reports: scratchpad `parity-1..5-*.md` (Juicescan 53b7882 vs juicebox.money 0512c604).
