@@ -266,10 +266,12 @@ export async function proposeSafeTx(opts) {
 
 // List the Safe's pending (not-yet-executed) queued transactions on `chainId`. Every read must succeed and every
 // page must be fetched: callers decide "nothing queued" from this list, so a partial answer rejects.
-// Callers asking while the same read is under way share it (a card and the batch tray on one tab); nothing is
-// kept once it settles, so a dialog or a proposal always reads the queue as it is then.
+// Every call reads the queue itself, so a read that decides a signature or a proposal sees what is queued at
+// that moment. Display-only callers (the queue card, the batch tray's "already proposed" note) pass
+// `{ share: true }` and join a read another sharing caller has under way; nothing is kept once it settles.
 var _queueInflight = {};
-export function listPendingSafeTxs(chainId, safe) {
+export function listPendingSafeTxs(chainId, safe, opts) {
+  if (!(opts && opts.share)) return readPendingSafeTxs(chainId, safe);
   var key = chainId + ':' + String(safe).toLowerCase();
   if (_queueInflight[key]) return _queueInflight[key];
   var p = readPendingSafeTxs(chainId, safe);

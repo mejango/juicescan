@@ -181,16 +181,37 @@ describe('Safe runtime fail-closed boundaries', () => {
     await expect(listPendingSafeTxs(1, TARGET)).resolves.toEqual([]);
   });
 
-  it('shares one queue read between callers asking at once and reads again afterwards', async () => {
+  it('shares one queue read between sharing callers asking at once and reads again afterwards', async () => {
     const answer = (url) => String(url).includes('multisig-transactions')
       ? { ok: true, json: async () => ({ results: [{ nonce: 5 }], next: null }) }
       : { ok: true, json: async () => ({ nonce: 5 }) };
     vi.mocked(fetch).mockReset().mockImplementation(async (url) => answer(url));
-    const both = await Promise.all([listPendingSafeTxs(1, SAFE), listPendingSafeTxs(1, SAFE.toLowerCase())]);
+    const both = await Promise.all([listPendingSafeTxs(1, SAFE, { share: true }), listPendingSafeTxs(1, SAFE.toLowerCase(), { share: true })]);
     expect(both).toEqual([[{ nonce: 5 }], [{ nonce: 5 }]]);
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
-    await listPendingSafeTxs(1, SAFE);
+    await listPendingSafeTxs(1, SAFE, { share: true });
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(4);
+  });
+
+  it('never joins a shared queue read from a default call: a pre-sign read sees what is queued then', async () => {
+    // Each queue page read answers with what is queued when it is asked.
+    let queued = [{ nonce: 5 }];
+    const pageReads = [];
+    vi.mocked(fetch).mockReset().mockImplementation((url) => {
+      if (!String(url).includes('multisig-transactions')) return Promise.resolve({ ok: true, json: async () => ({ nonce: 5 }) });
+      const results = queued;
+      return new Promise((resolve) => { pageReads.push(() => resolve({ ok: true, json: async () => ({ results, next: null }) })); });
+    });
+    const card = listPendingSafeTxs(1, SAFE, { share: true });
+    await vi.waitFor(() => expect(pageReads.length).toBe(1));
+    queued = [{ nonce: 5 }, { nonce: 6 }];
+    const presign = listPendingSafeTxs(1, SAFE);
+    const second = listPendingSafeTxs(1, SAFE);
+    await vi.waitFor(() => expect(pageReads.length).toBe(3));
+    pageReads.forEach((answer) => answer());
+    expect(await card).toEqual([{ nonce: 5 }]);
+    expect(await presign).toEqual([{ nonce: 5 }, { nonce: 6 }]);
+    expect(await second).toEqual([{ nonce: 5 }, { nonce: 6 }]);
   });
 
   it('asks a queue host again only after a server error or a network failure', async () => {

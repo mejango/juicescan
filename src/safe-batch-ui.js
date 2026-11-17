@@ -37,7 +37,7 @@ function callsKey(calls) {
 export async function findProposedBatch(chainId, safe, steps) {
   if (!safe || !steps.length || !hasSafeService(chainId)) return null;
   var key = callsKey(composeBatch(steps).calls);
-  var pending = await listPendingSafeTxs(chainId, safe);
+  var pending = await listPendingSafeTxs(chainId, safe, { share: true });
   return pending.filter(function (tx) { var calls = multiSendBatchCalls(tx); return !!calls && callsKey(calls) === key; })[0] || null;
 }
 
