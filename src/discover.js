@@ -14555,8 +14555,11 @@ export function renderActivityCard(project, opts) {
   load(false);
   livePoll(body, function () {
     return probeProjectActivity(project).then(function (newest) {
-      if (newest === newestShown) return true;
-      pendingPayments._refresh();
+      var changed = newest !== newestShown;
+      // A listed payment becomes available when its retry wait ends, which changes no count: while any is
+      // listed, the panel is read on every tick.
+      if (changed || pendingPayments.querySelector('.pending-payment-row')) pendingPayments._refresh();
+      if (!changed) return true;
       return load(true, newest).then(function (rows) { return !!rows; });
     });
   });
@@ -17351,7 +17354,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
       return Promise.all([
         requireFreshSafeGovernance(safe, c.id),
         readSafeUintBounded(clientFor(c.id), safe, 'nonce'),
-        listPendingSafeTxs(c.id, safe),
+        listPendingSafeTxs(c.id, safe, { share: true }),
       ]).then(async function (loaded) {
         var info = loaded[0];
         var currentBig = BigInt(loaded[1]);
@@ -22738,7 +22741,7 @@ async function fetchSwapHistory(project, knownPool) {
     pair: pair,
     reserves: reserves,
     sampled: series.length < (pages[0].totalCount || 0) + (pages[1].totalCount || 0),
-    indexed: poolHistoryKey(pages),
+    indexed: poolHistoryKey(pool, pages),
   };
 }
 
@@ -22748,12 +22751,13 @@ export var BENDYSTRAW_POOL_HISTORY_COUNTS_QUERY = 'query($poolId: String!, $chai
   + 'swapEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, limit: 1) { totalCount } '
   + 'buybackPoolEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, limit: 1) { totalCount } '
   + 'buybackPoolLiquidityEvents(where: { poolId: $poolId, chainId: $chainId, version: $version }, limit: 1) { totalCount } }';
-function poolHistoryKey(pages) {
-  return pages.map(function (page) { return Number(page && page.totalCount) || 0; }).join('/');
+// The pool is part of the key: another pool with the same counts is another history.
+function poolHistoryKey(pool, pages) {
+  return String(pool.poolId).toLowerCase() + ':' + pages.map(function (page) { return Number(page && page.totalCount) || 0; }).join('/');
 }
 function poolHistoryCounts(pool, chainId) {
   return bendystrawQuery(BENDYSTRAW_POOL_HISTORY_COUNTS_QUERY, { poolId: pool.poolId, chainId: Number(chainId), version: BENDYSTRAW_VERSION })
-    .then(function (data) { return poolHistoryKey([data.swapEvents, data.buybackPoolEvents, data.buybackPoolLiquidityEvents]); });
+    .then(function (data) { return poolHistoryKey(pool, [data.swapEvents, data.buybackPoolEvents, data.buybackPoolLiquidityEvents]); });
 }
 
 // Indexed project stats (volume / payments / contributors) from Bendystraw. Prefers the
@@ -30121,21 +30125,23 @@ function renderGossipSection(project) {
 // { chainId -> { lowercased local sucker address -> remoteChainId } }. Used to relabel the cash out a
 // sucker performs under the hood on prepare() as a bridge in the activity feed (not "cashed out"). MUST be
 // keyed by chain: native-bridge suckers share the SAME address on both chains, so a flat map would collide.
-// Read once per project per page session; a failed read is not kept, and a confirmed transaction's project
-// refresh (scheduleActiveProjectRefresh) reads it again.
+// Kept per project for ten minutes, so a sucker pair deployed elsewhere is picked up. A failed read is not
+// kept, and a confirmed transaction's project refresh (scheduleActiveProjectRefresh) reads it again.
+var SUCKER_MAP_CACHE_MS = 10 * 60 * 1000;
 var _suckerMapCache = {};
 function fetchProjectSuckerMap(project) {
   var chains = (project.chains || []).map(function (c) { return c.id; });
   var key = chains.map(function (C) { return C + ':' + pidOn(project, C); }).join(',');
-  if (_suckerMapCache[key]) return _suckerMapCache[key];
+  var kept = _suckerMapCache[key];
+  if (kept && Date.now() - kept.at < SUCKER_MAP_CACHE_MS) return kept.reading;
   var reading = Promise.all(chains.map(function (C) { return readAllSuckerPairsOf(pidOn(project, C), C).then(function (pairs) { return { C: C, pairs: pairs }; }); }))
     .then(function (lists) {
       var map = {};
       lists.forEach(function (x) { var m = map[x.C] = map[x.C] || {}; x.pairs.forEach(function (p) { if (p.local) m[p.local.toLowerCase()] = p.remoteChainId; }); });
       return map;
     });
-  _suckerMapCache[key] = reading;
-  reading.catch(function () { if (_suckerMapCache[key] === reading) delete _suckerMapCache[key]; });
+  _suckerMapCache[key] = { at: Date.now(), reading: reading };
+  reading.catch(function () { if (_suckerMapCache[key] && _suckerMapCache[key].reading === reading) delete _suckerMapCache[key]; });
   return reading;
 }
 

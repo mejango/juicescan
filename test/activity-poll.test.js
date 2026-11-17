@@ -3,10 +3,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parse } from 'graphql';
 
-const h = vi.hoisted(() => ({ queries: [], newest: 'event-1', failProbe: false }));
+const h = vi.hoisted(() => ({ queries: [], reads: [], newest: 'event-1', failProbe: false }));
 vi.mock('../src/wallet.js', async (original) => ({ ...await original(),
   // No suckers and no queued rulesets onchain.
-  createPublicClientForChain: () => ({ readContract: async () => [] }),
+  createPublicClientForChain: () => ({ readContract: async (request) => { h.reads.push(request.functionName); return []; } }),
 }));
 vi.mock('../src/bendystraw-client.js', async (original) => ({ ...await original(),
   bendystrawQuery: async (query) => {
@@ -50,7 +50,7 @@ describe('activity probe request', () => {
 });
 
 describe('activity card polling', () => {
-  beforeEach(() => { vi.useFakeTimers(); document.body.innerHTML = ''; localStorage.clear(); h.queries = []; h.newest = 'event-1'; h.failProbe = false; });
+  beforeEach(() => { vi.useFakeTimers(); document.body.innerHTML = ''; localStorage.clear(); h.queries = []; h.reads = []; h.newest = 'event-1'; h.failProbe = false; });
   afterEach(() => { vi.useRealTimers(); });
 
   it('sends one probe per 30 s tick and reloads only when the probe changed', async () => {
@@ -74,6 +74,36 @@ describe('activity card polling', () => {
     await vi.advanceTimersByTimeAsync(30000);
     expect(probes()).toBe(5);
     expect(others()).toBe(reloaded);
+  });
+
+  it('reads the pending payments on every tick while one is listed', async () => {
+    const pendingReads = () => h.queries.filter((query) => query.includes('PendingPayments')).length;
+    const card = renderActivityCard({ ...project, id: 8, chains: [{ id: 1, name: 'Ethereum', projectId: 8 }] });
+    document.body.appendChild(card);
+    await vi.advanceTimersByTimeAsync(1000);
+    const atLoad = pendingReads();
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(pendingReads()).toBe(atLoad);
+
+    // A payment in its retry wait is listed: nothing the probe counts changes when the wait ends.
+    const row = document.createElement('form'); row.className = 'pending-payment-row';
+    card.querySelector('.pending-payments-rows').appendChild(row);
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(pendingReads()).toBe(atLoad + 1);
+  });
+
+  it('reads the sucker map again once it is ten minutes old', async () => {
+    const mapReads = () => h.reads.filter((name) => name === 'allSuckersOf').length;
+    document.body.appendChild(renderActivityCard({ ...project, id: 9, chains: [{ id: 1, name: 'Ethereum', projectId: 9 }] }));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mapReads()).toBe(1);
+    h.newest = 'event-2';
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(mapReads()).toBe(1);
+    await vi.advanceTimersByTimeAsync(10 * 60000);
+    h.newest = 'event-3';
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(mapReads()).toBe(2);
   });
 
   it('slows down while the indexer fails', async () => {

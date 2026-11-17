@@ -3,7 +3,7 @@
 // when the counts moved.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const h = vi.hoisted(() => ({ reads: [], queries: [], hook: null, swapCount: 2 }));
+const h = vi.hoisted(() => ({ reads: [], queries: [], hook: null, swapCount: 2, fee: 10000 }));
 const ZERO = '0x0000000000000000000000000000000000000000';
 const NATIVE = '0x000000000000000000000000000000000000EEEe';
 const TOKEN = '0x7777777777777777777777777777777777777777';
@@ -14,7 +14,7 @@ vi.mock('../src/wallet.js', async (original) => ({ ...await original(),
       if (request.functionName === 'controllerOf') return '0x00000000000000000000000000000000000000c0';
       if (request.functionName === 'currentRulesetOf') return [{ id: 1n }, { dataHook: h.hook || ZERO, useDataHookForPay: true, useDataHookForCashOut: true }];
       if (request.functionName === 'accountingContextsOf') return [{ token: NATIVE, decimals: 18, currency: 61166 }];
-      if (request.functionName === 'poolKeyOf') return { currency0: ZERO, currency1: TOKEN, fee: 10000, tickSpacing: 200, hooks: ZERO };
+      if (request.functionName === 'poolKeyOf') return { currency0: ZERO, currency1: TOKEN, fee: h.fee, tickSpacing: 200, hooks: ZERO };
       if (request.functionName === 'extsload') return '0x' + (1n << 96n).toString(16).padStart(64, '0');
       throw new Error('Unread in this test: ' + request.functionName);
     },
@@ -37,7 +37,7 @@ const project = (id) => ({ id, chainId: 1, tokenSymbol: 'TKN', chains: [{ id: 1,
 const count = (list, wanted) => list.filter((entry) => entry === wanted).length;
 
 describe('price chart live refresh', () => {
-  beforeEach(() => { vi.useFakeTimers(); document.body.innerHTML = ''; localStorage.clear(); h.reads = []; h.queries = []; h.swapCount = 2; });
+  beforeEach(() => { vi.useFakeTimers(); document.body.innerHTML = ''; localStorage.clear(); h.reads = []; h.queries = []; h.swapCount = 2; h.fee = 10000; });
   afterEach(() => { vi.useRealTimers(); });
 
   it('starts no timer for a project with no pool', async () => {
@@ -75,5 +75,16 @@ describe('price chart live refresh', () => {
     await vi.advanceTimersByTimeAsync(30000);
     expect(count(h.queries, BENDYSTRAW_SWAP_EVENTS_QUERY)).toBe(pages + 1);
     expect(count(h.queries, BENDYSTRAW_POOL_HISTORY_COUNTS_QUERY)).toBe(3);
+  });
+
+  it('pages the history again when the project moved to another pool with the same row counts', async () => {
+    h.hook = getAddress('JBBuybackHook', 1);
+    document.body.appendChild(renderPriceChart(project(13), stages));
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(30000);
+    const pages = count(h.queries, BENDYSTRAW_SWAP_EVENTS_QUERY);
+    h.fee = 3000;
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(count(h.queries, BENDYSTRAW_SWAP_EVENTS_QUERY)).toBe(pages + 1);
   });
 });
